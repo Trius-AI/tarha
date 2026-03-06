@@ -6,7 +6,7 @@
 -export([start_lsp/1, start_index/1]).
 -include_lib("kernel/include/file.hrl").
 
--define(BACKUP_DIR, ".tarha/backups").
+-define(BACKUP_DIR, ".coding_agent_backups").
 -define(MAX_BACKUPS, 50).
 -define(OPS_LOG, coding_agent_ops_log).
 

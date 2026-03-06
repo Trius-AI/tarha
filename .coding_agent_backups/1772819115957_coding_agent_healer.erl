@@ -8,8 +8,8 @@
 -record(state, {crashes = [], auto_heal = true, monitored = #{}}%{pid => module}
 ).
 -define(CRASH_TABLE, coding_agent_crashes).
--define(CRASH_DIR, ".tarha/crashes").
--define(CRASH_REPORT_DIR, ".tarha/reports").
+-define(CRASH_DIR, ".coding_agent_crashes").
+-define(CRASH_REPORT_DIR, ".coding_agent_reports").
 -define(MAX_CRASHES, 100).
 -define(WORKERS, [coding_agent_process_monitor, coding_agent_self, coding_agent_healer]).
 
@@ -305,59 +305,31 @@ extract_modules([_ | Rest]) ->
 suggest_fix(Error, Stacktrace) ->
     Type = classify_error(Error),
     Modules = extract_modules(Stacktrace),
-    
-    % Check if we can rollback
-    RollbackAvailable = can_rollback(Modules),
-    
     case Type of
         badarg ->
-            suggest_with_rollback(check_arguments, Modules, 
-                "Check function arguments - invalid type or value passed", RollbackAvailable);
+            #{action => check_arguments, modules => Modules,
+              hint => "Check function arguments - invalid type or value passed"};
         badmatch ->
-            suggest_with_rollback(fix_pattern_match, Modules,
-                "Pattern match failed - verify expected values match actual", RollbackAvailable);
+            #{action => fix_pattern_match, modules => Modules,
+              hint => "Pattern match failed - verify expected values match actual"};
         case_clause ->
-            suggest_with_rollback(add_case_clause, Modules,
-                "Missing case clause - add handling for unexpected value", RollbackAvailable);
+            #{action => add_case_clause, modules => Modules,
+              hint => "Missing case clause - add handling for unexpected value"};
         function_clause ->
-            suggest_with_rollback(fix_function_arity, Modules,
-                "No matching function clause - check arity or add clause", RollbackAvailable);
+            #{action => fix_function_arity, modules => Modules,
+              hint => "No matching function clause - check arity or add clause"};
         undefined_function ->
-            suggest_with_rollback(export_or_define_function, Modules,
-                "Function not found - add -export or define function", RollbackAvailable);
+            #{action => export_or_define_function, modules => Modules,
+              hint => "Function not found - add -export or define function"};
         process_not_found ->
-            suggest_with_rollback(check_process_start, Modules,
-                "Process not found - ensure dependent process is started", RollbackAvailable);
+            #{action => check_process_start, modules => Modules,
+              hint => "Process not found - ensure dependent process is started"};
         timeout ->
-            suggest_with_rollback(increase_timeout_or_fix_hang, Modules,
-                "Operation timed out - increase timeout or fix blocking code", RollbackAvailable);
-        exit_signal ->
-            suggest_with_rollback(investigate, Modules,
-                "Process exited - check linked process or exit reason", RollbackAvailable);
-        error ->
-            suggest_with_rollback(investigate, Modules,
-                "Error occurred - manual investigation required", RollbackAvailable);
+            #{action => increase_timeout_or_fix_hang, modules => Modules,
+              hint => "Operation timed out - increase timeout or fix blocking code"};
         _ ->
-            suggest_with_rollback(investigate, Modules,
-                "Unknown error type - manual investigation required", RollbackAvailable)
-    end.
-
-suggest_with_rollback(Action, Modules, Hint, true) ->
-    #{action => Action, modules => Modules, hint => Hint, 
-      rollback_available => true, rollback_hint => "Can auto-rollback to previous version"};
-suggest_with_rollback(Action, Modules, Hint, false) ->
-    #{action => Action, modules => Modules, hint => Hint,
-      rollback_available => false, rollback_hint => "No previous version available"}.
-
-can_rollback([]) -> false;
-can_rollback([M | _]) ->
-    case whereis(coding_agent_self) of
-        undefined -> false;
-        _ ->
-            case coding_agent_self:get_versions(M) of
-                [_ | _] -> true;
-                _ -> false
-            end
+            #{action => investigate, modules => Modules,
+              hint => "Unknown error type - manual investigation required"}
     end.
 
 attempt_auto_fix(CrashData) ->
@@ -509,22 +481,8 @@ try_apply_fix(increase_timeout_or_fix_hang, _CrashData) ->
     {error, manual_fix_required};
 try_apply_fix(investigate, _CrashData) ->
     {error, manual_fix_required};
-try_apply_fix(rollback_version, CrashData) ->
-    % Attempt to rollback to previous version
-    #{affected_modules := Modules} = maps:get(analysis, CrashData, #{affected_modules => []}),
-    rollback_modules(Modules);
 try_apply_fix(_, _CrashData) ->
     {error, manual_fix_required}.
-
-rollback_modules([]) ->
-    {error, no_modules_to_rollback};
-rollback_modules([M | Rest]) ->
-    case coding_agent_self:rollback(M) of
-        #{success := true} ->
-            {ok, #{rolled_back => M}};
-        _ ->
-            rollback_modules(Rest)
-    end.
 
 fix_case_clause(CrashData) ->
     #{stacktrace := Stacktrace} = CrashData,

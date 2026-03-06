@@ -2,7 +2,7 @@
 -export([start/0, start/1]).
 -export([rl/0]).
 
--define(HISTORY_FILE, ".tarha/history").
+-define(HISTORY_FILE, ".coding_agent_history").
 
 start() ->
     start([]).
