@@ -24,7 +24,6 @@ start_link(Options) ->
             {"/health", ?MODULE, #{action => health}},
             {"/status", ?MODULE, #{action => status}},
             {"/chat", ?MODULE, #{action => chat}},
-            {"/chat/stream", ?MODULE, #{action => chat_stream}},
             {"/session", ?MODULE, #{action => session}},
             {"/session/:id", ?MODULE, #{action => session_info}},
             {"/session/:id/save", ?MODULE, #{action => session_save}},
@@ -35,7 +34,8 @@ start_link(Options) ->
             {"/memory/consolidate", ?MODULE, #{action => memory_consolidate}},
             {"/skills", ?MODULE, #{action => skills}},
             {"/skills/:name", ?MODULE, #{action => skill_detail}},
-            {"/tools", ?MODULE, #{action => tools}}
+            {"/tools", ?MODULE, #{action => tools}},
+            {"/test_tool_2", ?MODULE, #{action => test_tool_2}}
         ]}
     ]),
     
@@ -61,9 +61,6 @@ init(Req, State) ->
             {ok, Req2, State};
         _ ->
             try handle_action(Method, Action, Req) of
-                {stream, Req2} ->
-                    %% Streaming response - already handled
-                    {ok, Req2, State};
                 {ok, Response} ->
                     Headers = maps:merge(?CORS_HEADERS, #{<<"content-type">> => <<"application/json">>}),
                     Req2 = cowboy_req:reply(200, Headers, jsx:encode(Response), Req),
@@ -93,7 +90,6 @@ handle_action(<<"GET">>, index, _Req) ->
             #{method => <<"GET">>, path => <<"/health">>, description => <<"Health check">>},
             #{method => <<"GET">>, path => <<"/status">>, description => <<"Agent status">>},
             #{method => <<"POST">>, path => <<"/chat">>, description => <<"Send message to agent">>},
-            #{method => <<"POST">>, path => <<"/chat/stream">>, description => <<"Stream response with thinking">>},
             #{method => <<"POST">>, path => <<"/session">>, description => <<"Create session">>},
             #{method => <<"GET">>, path => <<"/session/:id">>, description => <<"Get session info">>},
             #{method => <<"POST">>, path => <<"/session/:id/save">>, description => <<"Save session to disk">>},
@@ -132,18 +128,6 @@ handle_action(<<"POST">>, chat, Req) ->
             Message = maps:get(<<"message">>, Data, <<>>),
             SessionId = maps:get(<<"session_id">>, Data, undefined),
             send_message(Message, SessionId);
-        false ->
-            {error, 400, invalid_json}
-    end;
-
-handle_action(<<"POST">>, chat_stream, Req) ->
-    {ok, Body, _} = cowboy_req:read_body(Req),
-    case jsx:is_json(Body) of
-        true ->
-            Data = jsx:decode(Body, [return_maps]),
-            Message = maps:get(<<"message">>, Data, <<>>),
-            SessionId = maps:get(<<"session_id">>, Data, undefined),
-            start_stream_response(Req, Message, SessionId);
         false ->
             {error, 400, invalid_json}
     end;
@@ -191,10 +175,6 @@ handle_action(<<"GET">>, tools, _Req) ->
         count => length(Tools),
         tools => [format_tool(T) || T <- Tools]
     }};
-
-handle_action(<<"GET">>, test_tool_2, _Req) ->
-    Result = coding_agent_tools:execute(<<"test_tool">>, #{}),
-    {ok, #{result => Result}};
 
 handle_action(<<"GET">>, memory, _Req) ->
     case whereis(coding_agent_conv_memory) of
@@ -331,64 +311,3 @@ format_tool(Tool) ->
         name => maps:get(<<"name">>, maps:get(<<"function">>, Tool, #{}), <<"unknown">>),
         description => maps:get(<<"description">>, maps:get(<<"function">>, Tool, #{}), <<"">>)
     }.
-
-%% Streaming chat endpoint - returns Server-Sent Events
-
-start_stream_response(Req, Message, SessionId) ->
-    %% Get or create session
-    {ok, {FinalSessionId, _Pid}} = case SessionId of
-        undefined -> coding_agent_session:new();
-        _ -> case ets:lookup(coding_agent_sessions, SessionId) of
-            [{_, ExistingPid}] -> {ok, {SessionId, ExistingPid}};
-            [] -> coding_agent_session:new()
-        end
-    end,
-    
-    %% Set up SSE headers
-    SSEHeaders = maps:merge(?CORS_HEADERS, #{
-        <<"content-type">> => <<"text/event-stream">>,
-        <<"cache-control">> => <<"no-cache">>,
-        <<"connection">> => <<"keep-alive">>
-    }),
-    
-    %% Initialize streaming response
-    Req2 = cowboy_req:stream_reply(200, SSEHeaders, Req),
-    
-    %% Send initial session ID
-    cowboy_req:stream_body(
-        iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"session">>, session_id => FinalSessionId}), <<"\n\n">>]),
-        nofin, Req2),
-    
-    %% Run the query and stream events
-    cowboy_req:stream_body(
-        iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"status">>, status => <<"thinking">>}), <<"\n\n">>]),
-        nofin, Req2),
-    
-    %% Call session (blocking, but returns full result)
-    Result = coding_agent_session:ask(FinalSessionId, Message),
-    
-    case Result of
-        {ok, Response, Thinking, _History} ->
-            %% Stream thinking if present
-            case Thinking of
-                <<>> -> ok;
-                _ ->
-                    cowboy_req:stream_body(
-                        iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"thinking">>, content => Thinking}), <<"\n\n">>]),
-                        nofin, Req2)
-            end,
-            %% Stream response
-            cowboy_req:stream_body(
-                iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"response">>, content => Response}), <<"\n\n">>]),
-                nofin, Req2),
-            %% Send done event
-            cowboy_req:stream_body(
-                iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"done">>}), <<"\n\n">>]),
-                fin, Req2);
-        {error, Reason} ->
-            cowboy_req:stream_body(
-                iolist_to_binary([<<"data: ">>, jsx:encode(#{type => <<"error">>, error => io_lib:format("~p", [Reason])}), <<"\n\n">>]),
-                fin, Req2)
-    end,
-    
-    {stream, Req2}.

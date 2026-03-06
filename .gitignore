@@ -46,3 +46,4 @@ context.md
 example-project/
 test/
 *.crashdumpsessions/*.json
+sessions/*.json
