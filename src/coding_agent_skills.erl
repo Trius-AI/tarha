@@ -22,7 +22,7 @@ stop() ->
 
 init([Options]) ->
     Workspace = proplists:get_value(workspace, Options, get_default_workspace()),
-    WorkspaceSkills = filename:join(Workspace, "skills"),
+    WorkspaceSkills = filename:join([Workspace, ".tarha", "skills"]),
     BuiltinSkills = proplists:get_value(builtin_skills, Options, get_builtin_skills_dir()),
     {ok, #state{
         workspace = Workspace,

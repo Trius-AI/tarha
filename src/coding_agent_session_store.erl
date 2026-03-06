@@ -5,7 +5,7 @@
 -behaviour(gen_server).
 
 -record(state, {dir :: string()}).
--define(SESSIONS_DIR, "sessions").
+-define(SESSIONS_DIR, ".tarha/sessions").
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

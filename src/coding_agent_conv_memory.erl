@@ -30,11 +30,11 @@ stop() ->
 
 init([Options]) ->
     Workspace = proplists:get_value(workspace, Options, get_default_workspace()),
-    MemoryFile = filename:join([Workspace, "memory", "MEMORY.md"]),
-    HistoryFile = filename:join([Workspace, "memory", "HISTORY.md"]),
+    MemoryFile = filename:join([Workspace, ".tarha", "memory", "MEMORY.md"]),
+    HistoryFile = filename:join([Workspace, ".tarha", "memory", "HISTORY.md"]),
     Window = proplists:get_value(window, Options, ?DEFAULT_WINDOW),
     
-    MemoryDir = filename:join(Workspace, "memory"),
+    MemoryDir = filename:join([Workspace, ".tarha", "memory"]),
     filelib:ensure_dir(MemoryDir ++ "/"),
     
     Memory = read_file(MemoryFile, <<>>),
