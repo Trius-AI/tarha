@@ -516,6 +516,19 @@ tools() ->
                     <<"required">> => []
                 }
             }
+        },
+        % Hello Command
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"hello">>,
+                <<"description">> => <<"Print hello world message.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
         }
     ].
 
@@ -958,6 +971,10 @@ execute(<<"list_checkpoints">>, _Args) ->
 
 execute(<<"test_tool">>, _Args) ->
     #{<<"success">> => true, <<"result">> => <<"hello">>};
+
+execute(<<"hello">>, _Args) ->
+    io:format("hello world~n"),
+    #{<<"success">> => true, <<"message">> => <<"hello world">>};
 
 execute(_Tool, _Args) ->
     #{<<"success">> => false, <<"error">> => <<"Unknown tool">>}.

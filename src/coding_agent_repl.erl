@@ -159,6 +159,9 @@ process_command(SessionId, History, "help" ++ _) ->
     io:format("  /reload <mod>  - Hot reload a module~n"),
     io:format("  /checkpoint     - Create checkpoint~n"),
     io:format("  /restore <id>  - Restore from checkpoint~n"),
+    io:format("  /sessions       - List saved sessions~n"),
+    io:format("  /load <id>      - Load a saved session~n"),
+    io:format("  /save           - Save current session~n"),
     io:format("  /clear          - Clear session history~n"),
     io:format("  /trim           - Force memory cleanup~n"),
     io:format("  /crashes        - Show recent crashes~n"),
@@ -355,6 +358,53 @@ process_command(SessionId, History, "fix " ++ CrashId) ->
     end,
     {continue, History};
     
+process_command(SessionId, History, "sessions" ++ _) ->
+    io:format("~nSaved Sessions:~n~n"),
+    case coding_agent_session:list_saved_sessions() of
+        {ok, SessionIds} when is_list(SessionIds) ->
+            case SessionIds of
+                [] -> 
+                    io:format("  (no saved sessions)~n~n"),
+                    io:format("Use /save to save the current session.~n~n");
+                _ ->
+                    lists:foreach(fun(Sid) ->
+                        SidStr = if is_binary(Sid) -> binary_to_list(Sid); true -> Sid end,
+                        io:format("  ~s~n", [SidStr])
+                    end, lists:sort(SessionIds)),
+                    io:format("~n~p session(s) found.~n~n", [length(SessionIds)])
+            end;
+        {error, Reason} ->
+            io:format("  Error listing sessions: ~p~n~n", [Reason])
+    end,
+    {continue, History};
+
+process_command(SessionId, History, "load " ++ SessionIdArg) ->
+    LoadId = list_to_binary(string:trim(SessionIdArg)),
+    io:format("Loading session ~s...~n", [LoadId]),
+    case coding_agent_session:load_session(LoadId) of
+        {ok, {NewSessionId, _Pid}} ->
+            io:format("✓ Session loaded: ~s~n", [NewSessionId]),
+            io:format("Session ID: ~s~n~n", [NewSessionId]),
+            loop(NewSessionId, []);
+        {error, session_not_found} ->
+            io:format("✗ Session not found: ~s~n", [LoadId]),
+            io:format("Use /sessions to see available sessions.~n~n"),
+            {continue, History};
+        {error, Reason} ->
+            io:format("✗ Failed to load session: ~p~n~n", [Reason]),
+            {continue, History}
+    end;
+
+process_command(SessionId, History, "save" ++ _) ->
+    io:format("Saving session ~s...~n", [SessionId]),
+    case coding_agent_session:save_session(SessionId) of
+        {ok, SavedId} ->
+            io:format("✓ Session saved: ~s~n~n", [SavedId]);
+        {error, Reason} ->
+            io:format("✗ Failed to save session: ~p~n~n", [Reason])
+    end,
+    {continue, History};
+
 process_command(_SessionId, History, "quit" ++ _) ->
     save_history(History),
     io:format("Goodbye!~n"),

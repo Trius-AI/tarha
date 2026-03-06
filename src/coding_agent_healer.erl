@@ -1,7 +1,8 @@
 -module(coding_agent_healer).
 -behaviour(gen_server).
 -export([start_link/0, analyze_crash/2, auto_fix/1, get_crashes/0, clear_crashes/0, 
-         report_crash/3, get_recent_crashes/0, write_crash_report/1]).
+         report_crash/3, get_recent_crashes/0, write_crash_report/1,
+         list_crash_reports/0, read_crash_report/1, delete_crash_report/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(state, {crashes = [], auto_heal = true, monitored = #{}}%{pid => module}
@@ -17,6 +18,7 @@ start_link() ->
 
 init([]) ->
     ets:new(?CRASH_TABLE, [named_table, public, ordered_set]),
+    filelib:ensure_dir(?CRASH_REPORT_DIR ++ "/"),
     process_flag(trap_exit, true),
     % Monitor all worker processes
     Monitored = lists:foldl(fun(Mod, Acc) ->
@@ -201,11 +203,54 @@ store_crash(Error, Stacktrace, Analysis) ->
     }, Analysis),
     ets:insert(?CRASH_TABLE, {CrashId, CrashData}),
     cleanup_old_crashes(),
+    % Auto-write crash report to disk
+    spawn(fun() ->
+        case write_crash_report(CrashId) of
+            {ok, Filename} ->
+                io:format("[healer] Crash report saved to ~s~n", [Filename]);
+            {error, Reason} ->
+                io:format("[healer] Failed to write crash report: ~p~n", [Reason])
+        end
+    end),
     CrashId.
 
 generate_crash_id() ->
     <<A:32, B:32>> = crypto:strong_rand_bytes(8),
     iolist_to_binary(io_lib:format("crash-~8.16.0b-~8.16.0b", [A, B])).
+
+%% List all persisted crash reports
+list_crash_reports() ->
+    case filelib:is_dir(?CRASH_REPORT_DIR) of
+        false -> [];
+        true ->
+            Files = filelib:wildcard(filename:join(?CRASH_REPORT_DIR, "crash-*.md")),
+            lists:map(fun(FilePath) ->
+                Filename = filename:basename(FilePath, ".md"),
+                #{id => list_to_binary(Filename), path => list_to_binary(FilePath)}
+            end, Files)
+    end.
+
+%% Read a specific crash report
+read_crash_report(CrashId) when is_binary(CrashId) ->
+    read_crash_report(binary_to_list(CrashId));
+read_crash_report(CrashId) when is_list(CrashId) ->
+    Filename = filename:join(?CRASH_REPORT_DIR, CrashId ++ ".md"),
+    case file:read_file(Filename) of
+        {ok, Content} -> {ok, Content};
+        {error, enoent} -> {error, not_found};
+        {error, Reason} -> {error, Reason}
+    end.
+
+%% Delete a crash report
+delete_crash_report(CrashId) when is_binary(CrashId) ->
+    delete_crash_report(binary_to_list(CrashId));
+delete_crash_report(CrashId) when is_list(CrashId) ->
+    Filename = filename:join(?CRASH_REPORT_DIR, CrashId ++ ".md"),
+    case file:delete(Filename) of
+        ok -> ok;
+        {error, enoent} -> ok;
+        {error, Reason} -> {error, Reason}
+    end.
 
 cleanup_old_crashes() ->
     case ets:info(?CRASH_TABLE, size) of

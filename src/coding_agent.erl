@@ -1,7 +1,7 @@
 -module(coding_agent).
 -behaviour(gen_server).
 
--export([start_link/0, run/1, run/2, stop/0, hello/0]).
+-export([start_link/0, run/1, run/2, stop/0, hello/0, goodbye/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(state, {
@@ -37,6 +37,9 @@ stop() ->
 
 hello() ->
     io:format("Hello World~n").
+
+goodbye() ->
+    io:format("Goodbye World~n").
 
 init([]) ->
     Model0 = application:get_env(coding_agent, model, <<"glm-5:cloud">>),
