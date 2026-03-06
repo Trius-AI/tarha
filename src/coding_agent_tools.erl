@@ -1092,9 +1092,19 @@ run_command_impl(Cmd, _Timeout, Cwd) ->
         end
     end.
 
-clean_output(String) ->
-    % Remove ANSI escape codes and return iolist
-    re:replace(String, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [{return, list}, global]).
+clean_output(String) when is_binary(String) ->
+    % Remove ANSI escape codes from binary
+    re:replace(String, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}]);
+clean_output(String) when is_list(String) ->
+    % Convert list to binary first if needed
+    Bin = case io_lib:printable_unicode_list(String) of
+        true -> unicode:characters_to_binary(String);
+        false -> list_to_binary(String)
+    end,
+    re:replace(Bin, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}]);
+clean_output(Other) ->
+    % Fallback for unexpected types
+    unicode:characters_to_binary(io_lib:format("~p", [Other])).
 
 create_backup_internal(Path) ->
     BackupDir = ?BACKUP_DIR,

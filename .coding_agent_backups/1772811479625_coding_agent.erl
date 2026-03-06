@@ -35,9 +35,6 @@ run(Task, Opts) ->
 stop() ->
     gen_server:stop(?MODULE).
 
-hello() ->
-    io:format("Hello World~n").
-
 init([]) ->
     Model0 = application:get_env(coding_agent, model, <<"glm-5:cloud">>),
     Model = if is_list(Model0) -> list_to_binary(Model0); true -> Model0 end,
