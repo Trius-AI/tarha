@@ -504,19 +504,6 @@ tools() ->
                 }
             }
         },
-        % Test Tool
-        #{
-            <<"type">> => <<"function">>,
-            <<"function">> => #{
-                <<"name">> => <<"test_tool">>,
-                <<"description">> => <<"A simple test tool that returns 'hello'.">>,
-                <<"parameters">> => #{
-                    <<"type">> => <<"object">>,
-                    <<"properties">> => #{},
-                    <<"required">> => []
-                }
-            }
-        },
         % Hello Command
         #{
             <<"type">> => <<"function">>,
@@ -787,7 +774,7 @@ execute(<<"grep_files">>, Args) ->
         [] -> #{<<"success">> => true, <<"matches">> => <<"No matches found">>};
         _ ->
             Trimmed = string:trim(Result, trailing, "\n"),
-            #{<<"success">> => true, <<"matches">> => list_to_binary(Trimmed)}
+            #{<<"success">> => true, <<"matches">> => unicode:characters_to_binary(Trimmed)}
     end;
 
 execute(<<"find_files">>, #{<<"pattern">> := Pattern} = Args) ->
@@ -803,7 +790,7 @@ execute(<<"find_files">>, #{<<"pattern">> := Pattern} = Args) ->
         _ ->
             Trimmed = string:trim(Result, trailing, "\n"),
             Files = string:split(Trimmed, "\n", all),
-            #{<<"success">> => true, <<"files">> => [list_to_binary(F) || F <- Files]}
+            #{<<"success">> => true, <<"files">> => [unicode:characters_to_binary(F) || F <- Files]}
     end;
 
 % Backup Operations
@@ -863,13 +850,13 @@ execute(<<"smart_commit">>, Args) ->
                             #{<<"success">> => true, 
                               <<"preview">> => true,
                               <<"message">> => CommitMsg,
-                              <<"diff">> => list_to_binary(string:trim(Diff, trailing))};
+                                <<"diff">> => unicode:characters_to_binary(string:trim(Diff, trailing))};
                         false ->
                             CommitCmd = "git commit -m '" ++ binary_to_list(CommitMsg) ++ "'",
                             Result = os:cmd(CommitCmd ++ " 2>&1"),
                             #{<<"success">> => true,
                               <<"message">> => CommitMsg,
-                              <<"output">> => list_to_binary(string:trim(Result, trailing))}
+                                <<"output">> => unicode:characters_to_binary(string:trim(Result, trailing))}
                     end
             end
     end;
@@ -894,7 +881,7 @@ execute(<<"review_changes">>, Args) ->
             Review = analyze_diff(Diff),
             #{
                 <<"success">> => true,
-                <<"diff">> => list_to_binary(string:trim(Diff, trailing)),
+                            <<"diff">> => unicode:characters_to_binary(string:trim(Diff, trailing)),
                 <<"review">> => Review,
                 <<"summary">> => generate_review_summary(Diff)
             }
@@ -968,9 +955,6 @@ execute(<<"restore_checkpoint">>, #{<<"checkpoint_id">> := CheckpointId}) ->
 execute(<<"list_checkpoints">>, _Args) ->
     {ok, Checkpoints} = coding_agent_self:list_checkpoints(),
     #{<<"success">> => true, <<"checkpoints">> => Checkpoints};
-
-execute(<<"test_tool">>, _Args) ->
-    #{<<"success">> => true, <<"result">> => <<"hello">>};
 
 execute(<<"hello">>, _Args) ->
     io:format("hello world~n"),
@@ -1127,17 +1111,53 @@ run_command_impl(Cmd, _Timeout, Cwd) ->
 
 clean_output(String) when is_binary(String) ->
     % Remove ANSI escape codes from binary
-    re:replace(String, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}]);
+    try
+        re:replace(String, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}])
+    catch
+        _:_ -> String
+    end;
 clean_output(String) when is_list(String) ->
-    % Convert list to binary first if needed
-    Bin = case io_lib:printable_unicode_list(String) of
-        true -> unicode:characters_to_binary(String);
-        false -> list_to_binary(String)
-    end,
-    re:replace(Bin, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}]);
+    % Check if it's a printable string
+    case io_lib:printable_unicode_list(String) of
+        true -> 
+            % It's a string - convert to binary and clean
+            try
+                Bin = unicode:characters_to_binary(String),
+                re:replace(Bin, "\\x1b\\[[0-9;]*[a-zA-Z]", "", [global, {return, binary}])
+            catch
+                _:_ -> unicode:characters_to_binary(String)
+            end;
+        false ->
+            % It's a nested structure - return as formatted string
+            case String of
+                [] -> <<"[]">>;
+                _ when is_list(hd(String)) ->
+                    % Nested list - limit depth and size
+                    MaxItems = 100,
+                    Limited = lists:sublist(String, MaxItems),
+                    unicode:characters_to_binary(io_lib:format("[list of ~p items, showing first ~p]", [length(String), length(Limited)]));
+                _ ->
+                    % Flat list but not printable - format safely
+                    try
+                        unicode:characters_to_binary(io_lib:format("~w", [String]))
+                    catch
+                        _:_ -> <<"[unprintable data]">>
+                    end
+            end
+    end;
 clean_output(Other) ->
-    % Fallback for unexpected types
-    unicode:characters_to_binary(io_lib:format("~p", [Other])).
+    % Fallback for any other type
+    try
+        Bin = iolist_to_binary(io_lib:format("~p", [Other])),
+        case byte_size(Bin) of
+            Size when Size > 10000 ->
+                <<FirstPart:10000/binary, _/binary>> = Bin,
+                <<FirstPart/binary, "... (truncated)">>;
+            _ -> Bin
+        end
+    catch
+        _:_ -> <<"[error serializing result]">>
+    end.
 
 create_backup_internal(Path) ->
     BackupDir = ?BACKUP_DIR,

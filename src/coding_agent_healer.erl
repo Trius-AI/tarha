@@ -33,7 +33,14 @@ init([]) ->
 
 handle_call({analyze_crash, Error, Stacktrace}, _From, State) ->
     Analysis = do_analyze_crash(Error, Stacktrace),
-    CrashId = store_crash(Error, Stacktrace, Analysis),
+    CrashInfo = #{
+        type => crash,
+        reason => Error,
+        stacktrace => Stacktrace,
+        analysis => Analysis,
+        timestamp => erlang:system_time(millisecond)
+    },
+    CrashId = store_crash(crash, Error, CrashInfo),
     {reply, {CrashId, Analysis}, State};
 
 handle_call({auto_fix, CrashId}, _From, State) ->
@@ -83,12 +90,14 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, State = #state{monitored = Moni
         {Module, Ref} ->
             % Known process crashed
             Stacktrace = try throw(capture) catch throw:capture:St -> St end,
+            Analysis = do_analyze_crash(Reason, Stacktrace),
             CrashInfo = #{
                 type => crash,
                 module => Module,
                 pid => Pid,
                 reason => Reason,
                 stacktrace => Stacktrace,
+                analysis => Analysis,
                 timestamp => erlang:system_time(millisecond)
             },
             CrashId = store_crash(crash, Reason, CrashInfo),
@@ -134,11 +143,13 @@ handle_info({remonitor, Module}, State = #state{monitored = Monitored}) ->
 
 handle_info({'EXIT', Pid, Reason}, State) ->
     Stacktrace = try throw(capture) catch throw:capture:St -> St end,
+    Analysis = do_analyze_crash(Reason, Stacktrace),
     CrashInfo = #{
         type => exit,
         pid => Pid,
         reason => Reason,
         stacktrace => Stacktrace,
+        analysis => Analysis,
         timestamp => erlang:system_time(millisecond)
     },
     CrashId = store_crash(exit, Reason, CrashInfo),
@@ -178,11 +189,14 @@ clear_crashes() ->
     gen_server:call(?MODULE, clear_crashes).
 
 report_crash(Module, Reason, Stacktrace) ->
+    % Run analysis
+    Analysis = do_analyze_crash(Reason, Stacktrace),
     CrashInfo = #{
         type => crash,
         module => Module,
         reason => Reason,
         stacktrace => Stacktrace,
+        analysis => Analysis,
         timestamp => erlang:system_time(millisecond)
     },
     CrashId = store_crash(crash, Reason, CrashInfo),
@@ -193,17 +207,14 @@ report_crash(Module, Reason, Stacktrace) ->
     end,
     CrashId.
 
-store_crash(Error, Stacktrace, Analysis) ->
+store_crash(_ErrorType, _Reason, CrashInfo) ->
     CrashId = generate_crash_id(),
-    CrashData = maps:merge(#{
+    CrashData = CrashInfo#{
         id => CrashId,
-        error => Error,
-        stacktrace => Stacktrace,
-        timestamp => erlang:system_time(millisecond)
-    }, Analysis),
+        timestamp => maps:get(timestamp, CrashInfo, erlang:system_time(millisecond))
+    },
     ets:insert(?CRASH_TABLE, {CrashId, CrashData}),
     cleanup_old_crashes(),
-    % Auto-write crash report to disk
     spawn(fun() ->
         case write_crash_report(CrashId) of
             {ok, Filename} ->
@@ -401,8 +412,8 @@ write_crash_report(CrashId) ->
 generate_crash_report_content(CrashId, CrashData) ->
     Timestamp = maps:get(timestamp, CrashData, 0),
     ErrorType = maps:get(type, CrashData, unknown),
-    Error = maps:get(error, CrashData, unknown),
     Module = maps:get(module, CrashData, unknown),
+    Reason = maps:get(reason, CrashData, unknown),
     Stacktrace = maps:get(stacktrace, CrashData, []),
     Analysis = maps:get(analysis, CrashData, #{}),
     
@@ -415,9 +426,8 @@ generate_crash_report_content(CrashId, CrashData) ->
         io_lib:format("**Timestamp:** ~p\n\n", [Timestamp]),
         io_lib:format("**Module:** ~p\n\n", [Module]),
         io_lib:format("**Error Type:** ~p\n\n", [ErrorType]),
-        io_lib:format("**Error:** ```\n~p\n```\n\n", [Error]),
-        <<"## Stacktrace\n\n">>,
-        <<"```\n">>,
+        io_lib:format("**Error:**\n\n```\n~p\n```\n\n", [Reason]),
+        <<"## Stacktrace\n\n```\n">>,
         format_stacktrace_for_report(Stacktrace),
         <<"```\n\n">>,
         <<"## Affected Modules\n\n">>,

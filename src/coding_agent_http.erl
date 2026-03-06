@@ -76,8 +76,14 @@ init(Req, State) ->
                 Type:Error:Stacktrace ->
                     io:format("[http] Error ~p:~p~n~p~n", [Type, Error, Stacktrace]),
                     Headers = maps:merge(?CORS_HEADERS, #{<<"content-type">> => <<"application/json">>}),
+                    ErrorBinary = try iolist_to_binary(io_lib:format("~p", [Error]))
+                                    catch _:_ -> <<"[error serializing]">> end,
+                    ErrorBinary2 = case byte_size(ErrorBinary) of
+                                      Size when Size > 500 -> <<(binary_part(ErrorBinary, 0, 500))/binary, "... (truncated)">>;
+                                      _ -> ErrorBinary
+                                  end,
                     Req2 = cowboy_req:reply(500, Headers, 
-                        jsx:encode(#{error => internal_error, details => io_lib:format("~p", [Error])}), Req),
+                        jsx:encode(#{error => internal_error, details => ErrorBinary2}), Req),
                     {ok, Req2, State}
             end
     end.
@@ -191,10 +197,6 @@ handle_action(<<"GET">>, tools, _Req) ->
         count => length(Tools),
         tools => [format_tool(T) || T <- Tools]
     }};
-
-handle_action(<<"GET">>, test_tool_2, _Req) ->
-    Result = coding_agent_tools:execute(<<"test_tool">>, #{}),
-    {ok, #{result => Result}};
 
 handle_action(<<"GET">>, memory, _Req) ->
     case whereis(coding_agent_conv_memory) of

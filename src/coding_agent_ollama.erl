@@ -2,12 +2,51 @@
 -export([generate/2, generate_stream/2, chat/2, chat_with_tools/3, chat_stream/3, chat_stream/4]).
 -export([count_tokens/1, truncate_messages/2]).
 
+-define(MAX_RETRIES, 20).
+-define(RETRY_DELAY_BASE, 1000).  % 1 second base, exponential backoff.
+
+do_with_retry(Fun) ->
+    do_with_retry(Fun, 0).
+
+do_with_retry(Fun, RetryCount) when RetryCount >= ?MAX_RETRIES ->
+    {error, max_retries_exceeded};
+do_with_retry(Fun, RetryCount) ->
+    case Fun() of
+        {ok, Result} ->
+            {ok, Result};
+        {error, {status, StatusCode, _Body}} when StatusCode =:= 408; StatusCode =:= 429; StatusCode >= 500 ->
+            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
+            io:format("[ollama] HTTP ~p, retrying in ~pms (attempt ~p/~p)~n", 
+                      [StatusCode, Delay, RetryCount + 1, ?MAX_RETRIES]),
+            timer:sleep(Delay),
+            do_with_retry(Fun, RetryCount + 1);
+        {error, {status, StatusCode, Body}} ->
+            % Non-retryable status (4xx except 429, 408)
+            {error, {http_error, StatusCode, Body}};
+        {error, timeout} ->
+            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
+            io:format("[ollama] Timeout, retrying in ~pms (attempt ~p/~p)~n", 
+                      [Delay, RetryCount + 1, ?MAX_RETRIES]),
+            timer:sleep(Delay),
+            do_with_retry(Fun, RetryCount + 1);
+        {error, Reason} ->
+            % Network errors, etc. - retry
+            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
+            io:format("[ollama] Error ~p, retrying in ~pms (attempt ~p/~p)~n", 
+                      [Reason, Delay, RetryCount + 1, ?MAX_RETRIES]),
+            timer:sleep(Delay),
+            do_with_retry(Fun, RetryCount + 1)
+    end.
+
 generate(Model, Prompt) ->
     generate(Model, Prompt, #{}).
 
 generate(Model, Prompt, Opts) when is_list(Model) ->
     generate(list_to_binary(Model), Prompt, Opts);
 generate(Model, Prompt, _Opts) when is_binary(Model) ->
+    do_with_retry(fun() -> do_generate(Model, Prompt) end).
+
+do_generate(Model, Prompt) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/generate",
     PromptBin = iolist_to_binary(Prompt),
@@ -50,6 +89,9 @@ generate_stream(Model, Prompt) ->
     end.
 
 chat(Model, Messages) ->
+    do_with_retry(fun() -> do_chat(Model, Messages) end).
+
+do_chat(Model, Messages) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
@@ -73,6 +115,9 @@ chat(Model, Messages) ->
 chat_with_tools(Model, Messages, Tools) when is_list(Model) ->
     chat_with_tools(list_to_binary(Model), Messages, Tools);
 chat_with_tools(Model, Messages, Tools) when is_binary(Model) ->
+    do_with_retry(fun() -> do_chat_with_tools(Model, Messages, Tools) end).
+
+do_chat_with_tools(Model, Messages, Tools) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
@@ -116,13 +161,15 @@ collect_stream(Acc, Chunks) ->
         {error, timeout}
     end.
 
-% Streaming support with callback
 chat_stream(Model, Messages, Tools) ->
     chat_stream(Model, Messages, Tools, fun(_, _) -> ok end).
 
 chat_stream(Model, Messages, Tools, Callback) when is_list(Model) ->
     chat_stream(list_to_binary(Model), Messages, Tools, Callback);
 chat_stream(Model, Messages, Tools, Callback) when is_binary(Model) ->
+    do_with_retry(fun() -> do_chat_stream(Model, Messages, Tools, Callback) end).
+
+do_chat_stream(Model, Messages, Tools, Callback) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
@@ -137,7 +184,9 @@ chat_stream(Model, Messages, Tools, Callback) when is_binary(Model) ->
     Headers = [{<<"Content-Type">>, <<"application/json">>}],
     
     case hackney:post(Url, Headers, Body, [{stream, self()}]) of
-        {ok, _RequestId} ->
+        {ok, _StatusCode, _Headers, Ref} when is_reference(Ref) ->
+            collect_chat_stream(Callback, #{}, <<>>, <<>>);
+        {ok, _Ref} ->
             collect_chat_stream(Callback, #{}, <<>>, <<>>);
         {error, Reason} ->
             {error, Reason}

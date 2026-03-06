@@ -3,7 +3,7 @@
 
 -export([start_link/0, start_link/1, start_link/2, new/0, new/1, ask/2, ask/3]).
 -export([history/1, clear/1, stop_session/1, sessions/0]).
--export([open_files/1, close_file/2, stats/1, ask_stream/3]).
+-export([open_files/1, close_file/2, stats/1, ask_stream/3, compact/1]).
 -export([save_session/1, load_session/1, list_saved_sessions/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -19,7 +19,9 @@
 
 -define(MAX_ITERATIONS, 100).
 -define(MAX_HISTORY, 100).
--define(MAX_TOKENS, 120000).
+-define(MAX_TOKENS, 80000).  % Compaction threshold - when exceeded, summarize context
+-define(COMPACTION_THRESHOLD, 60000).  % Trigger compaction when tokens exceed this
+-define(ARCHIVE_DIR, ".tarha/sessions").
 -define(MAX_TOOL_RETRIES, 3).
 -define(SESSIONS_TABLE, coding_agent_sessions).
 -define(SYSTEM_PROMPT, <<"You are an autonomous coding assistant. You CAN and SHOULD take multiple actions to complete tasks without asking for permission between steps.
@@ -181,6 +183,16 @@ clear(Session) when is_binary(Session) ->
 clear({_, Pid}) ->
     clear(Pid).
 
+compact(Session) when is_pid(Session) ->
+    gen_server:call(Session, compact, 120000);
+compact(Session) when is_binary(Session) ->
+    case ets:lookup(?SESSIONS_TABLE, Session) of
+        [{_, Pid}] -> compact(Pid);
+        [] -> {error, session_not_found}
+    end;
+compact({_, Pid}) ->
+    compact(Pid).
+
 stop_session(Session) when is_pid(Session) ->
     gen_server:stop(Session);
 stop_session(Session) when is_binary(Session) ->
@@ -264,10 +276,10 @@ handle_call({ask, Message, _Opts}, _From, State = #state{model = Model, messages
         _ -> <<WithAgents/binary, "\n\n", MemoryContext/binary>>
     end,
     
-    % Add skills if present
+    % Add skills if present (only summary, not full content)
     WithSkills = case SkillsContext of
         <<>> -> WithMemory;
-        _ -> <<WithMemory/binary, "\n\n# Skills\n\n", SkillsContext/binary>>
+        _ -> <<WithMemory/binary, "\n\n# Available Skills\n\nSkills are available. Use read_file on skill's SKILL.md to load full instructions.\n\n", SkillsContext/binary>>
     end,
     
     % Add open files if present
@@ -293,9 +305,11 @@ handle_call({ask, Message, _Opts}, _From, State = #state{model = Model, messages
             },
             % Check if consolidation needed (async)
             maybe_trigger_consolidation(),
+            % Check if compaction needed
+            CompactedState = maybe_compact_session(NewState),
             % Auto-save session (async)
-            maybe_save_session(NewState),
-            {reply, {ok, Response, Thinking, ReplyHistory}, NewState};
+            maybe_save_session(CompactedState),
+            {reply, {ok, Response, Thinking, ReplyHistory}, CompactedState};
         {error, Reason} ->
             {reply, {error, Reason}, State}
     end;
@@ -321,6 +335,26 @@ handle_call(stats, _From, State = #state{total_tokens = Tokens, tool_calls = Cal
 
 handle_call(clear, _From, State) ->
     {reply, ok, State#state{messages = [], open_files = #{}}};
+
+handle_call(compact, _From, State = #state{id = Id, messages = Messages, model = Model, total_tokens = Tokens}) ->
+    io:format("[session] Compacting session ~s (~p tokens)~n", [Id, Tokens]),
+    ArchiveId = archive_session(State),
+    case summarize_messages(Messages, Model) of
+        {ok, SummaryText} ->
+            SummaryMsg = #{
+                <<"role">> => <<"system">>,
+                <<"content">> => <<"This is a summary of the previous conversation:\n\n", SummaryText/binary>>
+            },
+            NewState = State#state{
+                messages = [SummaryMsg],
+                total_tokens = byte_size(SummaryText) div 4
+            },
+            io:format("[session] Session compacted. Archived as ~s~n", [ArchiveId]),
+            {reply, {ok, #{archived_as => ArchiveId, summary_size => byte_size(SummaryText)}}, NewState};
+        {error, Reason} ->
+            io:format("[session] Compaction failed: ~p~n", [Reason]),
+            {reply, {error, Reason}, State}
+    end;
 
 handle_call(save_session, _From, State = #state{id = Id, model = Model, working_dir = WD, open_files = OpenFiles}) ->
     SessionData = #{
@@ -382,6 +416,8 @@ build_file_context(OpenFiles) ->
 
 run_agent_loop(Model, Messages, Iteration, OpenFiles) when Iteration >= ?MAX_ITERATIONS ->
     {error, max_iterations_reached, Messages};
+run_agent_loop(Model, Messages, Iteration, OpenFiles) when Iteration >= ?MAX_ITERATIONS ->
+    {error, max_iterations_reached, Messages};
 run_agent_loop(Model, Messages, Iteration, OpenFiles) ->
     Tools = coding_agent_tools:tools(),
     case coding_agent_ollama:chat_with_tools(Model, Messages, Tools) of
@@ -403,7 +439,6 @@ handle_response(Model, Messages, #{<<"tool_calls">> := ToolCalls} = ResponseMsg,
     ToolMsg = #{<<"role">> => <<"tool">>, <<"content">> => ToolResults},
     MessagesWithResults = UpdatedMessages ++ [ToolMsg],
     
-    % Estimate tokens
     MsgSize = estimate_message_size(MessagesWithResults),
     
     case run_agent_loop(Model, MessagesWithResults, Iteration + 1, NewOpenFiles) of
@@ -444,7 +479,16 @@ execute_tool_calls(ToolCalls, OpenFiles) when is_list(ToolCalls) ->
         (_, Acc) -> Acc
     end, OpenFiles, Results),
     ResultList = [R || {R, _} <- Results],
-    {list_to_binary(io_lib:format("~p", [ResultList])), NewOpenFiles}.
+    ResultBin = try 
+        Bin = iolist_to_binary(io_lib:format("~p", [ResultList])),
+        case byte_size(Bin) of
+            Size when Size > 50000 ->
+                <<FirstPart:50000/binary, _/binary>> = Bin,
+                <<FirstPart/binary, "... (truncated)">>;
+            _ -> Bin
+        end
+    catch _:_ -> <<"[error serializing result]">> end,
+    {ResultBin, NewOpenFiles}.
 
 execute_single_tool_with_retry(TC, OpenFiles) ->
     execute_single_tool_with_retry(TC, OpenFiles, 0).
@@ -473,6 +517,23 @@ should_retry(<<"syntax error">>) -> false;
 should_retry(_) -> true.  % Retry on transient errors
 
 execute_single_tool(#{<<"function">> := #{<<"name">> := Name, <<"arguments">> := Args}}, OpenFiles) ->
+    % Print tool call for visibility
+    io:format("  [tool] ~s", [Name]),
+    case maps:size(Args) of
+        0 -> io:format("~n");
+        _ ->
+            ArgPreview = try 
+                Preview = iolist_to_binary(io_lib:format("~p", [Args])),
+                case byte_size(Preview) of
+                    Size when Size > 100 ->
+                        <<Short:100/binary, _/binary>> = Preview,
+                        <<Short/binary, "...">>;
+                    _ -> Preview
+                end
+            catch _:_ -> <<"...">>
+            end,
+            io:format(" ~s~n", [ArgPreview])
+    end,
     Result = coding_agent_tools:execute(Name, Args),
     
     % Cache file content if it was read successfully
@@ -595,6 +656,104 @@ strip_frontmatter(Content) when is_binary(Content) ->
         _ -> Content
     end;
 strip_frontmatter(Content) -> Content.
+
+%% Session compaction - summarize and archive old context
+maybe_compact_session(State = #state{total_tokens = Tokens}) when Tokens > ?COMPACTION_THRESHOLD ->
+    compact_session(State);
+maybe_compact_session(State) ->
+    State.
+
+compact_session(State = #state{id = Id, messages = Messages, model = Model, total_tokens = Tokens}) ->
+    io:format("[session] Compacting session ~s (~p tokens)~n", [Id, Tokens]),
+    
+    % Archive old session
+    ArchiveId = archive_session(State),
+    
+    % Summarize the conversation
+    Summary = summarize_messages(Messages, Model),
+    
+    case Summary of
+        {ok, SummaryText} ->
+            % Create new session with summary as context
+            SummaryMsg = #{
+                <<"role">> => <<"system">>,
+                <<"content">> => <<"This is a summary of the previous conversation:\n\n", SummaryText/binary>>
+            },
+            io:format("[session] Session compacted. Archived as ~s~n", [ArchiveId]),
+            State#state{
+                messages = [SummaryMsg],
+                total_tokens = byte_size(SummaryText) div 4  % Rough estimate
+            };
+        {error, _} ->
+            io:format("[session] Compaction failed, keeping full context~n"),
+            State
+    end.
+
+archive_session(#state{id = Id, model = Model, messages = Messages, working_dir = WD, open_files = OpenFiles, total_tokens = Tokens, tool_calls = Calls}) ->
+    ArchiveId = <<Id/binary, "-archived-", (integer_to_binary(erlang:system_time(millisecond)))/binary>>,
+    filelib:ensure_dir(?ARCHIVE_DIR ++ "/"),
+    ArchivePath = filename:join(?ARCHIVE_DIR, <<ArchiveId/binary, ".json">>),
+    ArchiveData = #{
+        id => ArchiveId,
+        original_id => Id,
+        model => Model,
+        working_dir => list_to_binary(WD),
+        messages => Messages,
+        open_files => OpenFiles,
+        total_tokens => Tokens,
+        tool_calls => Calls,
+        archived_at => erlang:system_time(millisecond)
+    },
+    case file:write_file(ArchivePath, jsx:encode(ArchiveData)) of
+        ok -> ArchiveId;
+        _ -> <<>>
+    end.
+
+summarize_messages([], _Model) ->
+    {ok, <<"No previous conversation.">>};
+summarize_messages(Messages, Model) ->
+    % Build a summary prompt
+    ConversationText = messages_to_text(Messages),
+    SummaryPrompt = <<"Summarize the following conversation concisely, capturing:\n"
+                      "1. Key topics discussed\n"
+                      "2. Important decisions made\n"
+                      "3. Files worked on\n"
+                      "4. Current state/progress\n\n"
+                      "Keep the summary under 2000 characters.\n\n"
+                      "Conversation:\n", ConversationText/binary>>,
+    
+    case coding_agent_ollama:chat(Model, [
+        #{<<"role">> => <<"system">>, <<"content">> => <<"You are a helpful assistant that summarizes conversations concisely.">>},
+        #{<<"role">> => <<"user">>, <<"content">> => SummaryPrompt}
+    ]) of
+        {ok, #{<<"message">> := #{<<"content">> := Summary}}} when is_binary(Summary) ->
+            {ok, Summary};
+        {ok, _} ->
+            {error, invalid_response};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+messages_to_text(Messages) ->
+    lists:foldl(fun(Msg, Acc) ->
+        Role = maps:get(<<"role">>, Msg, <<"unknown">>),
+        Content = maps:get(<<"content">>, Msg, <<"">>),
+        RoleStr = case Role of
+            <<"system">> -> <<"SYSTEM: ">>;
+            <<"user">> -> <<"USER: ">>;
+            <<"assistant">> -> <<"ASSISTANT: ">>;
+            <<"tool">> -> <<"TOOL: ">>;
+            _ -> <<"UNKNOWN: ">>
+        end,
+        % Truncate long content
+        Truncated = case byte_size(Content) > 1000 of
+            true ->
+                <<Short:1000/binary, _/binary>> = Content,
+                <<Short/binary, "... (truncated)">>;
+            false -> Content
+        end,
+        <<Acc/binary, RoleStr/binary, Truncated/binary, "\n\n">>
+    end, <<"">>, Messages).
 
 %% Auto-save session (async)
 maybe_save_session(State = #state{id = Id, model = Model, working_dir = WD, open_files = OpenFiles}) ->

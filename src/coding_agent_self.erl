@@ -46,7 +46,9 @@ handle_call({rollback, M}, _From, State) ->
 handle_call(rollback_latest, _From, State) ->
     {Reply, NewState} = do_rollback_latest(State),
     {reply, Reply, NewState};
-handle_call(get_modules, _From, S) -> {reply, [mod_info(M) || M <- ?MODULES], S};
+handle_call(get_modules, _From, S) -> 
+    Modules = [mod_info(M, S) || M <- ?MODULES],
+    {reply, Modules, S};
 handle_call({get_versions, M}, _From, State) -> 
     Versions = maps:get(M, State#state.versions, []),
     {reply, Versions, State};
@@ -66,7 +68,7 @@ code_change(_, S, _) -> {ok, S}.
 do_reload_with_version(M, Opts, State) ->
     case code:which(M) of
         non_existing ->
-            {{error, module_not_loaded}, State};
+            {#{success => false, error => <<"module not loaded">>}, State};
         CurrentBeam ->
             % Archive current version
             ArchiveResult = archive_version(M, CurrentBeam),
@@ -92,14 +94,23 @@ do_reload_with_version(M, Opts, State) ->
                             {#{success => true, module => M, archived => ArchivedPath}, NewState};
                         {error, Reason} ->
                             io:format("[self] Failed to reload ~p: ~p~n", [M, Reason]),
-                            {{error, Reason}, State}
+                            ErrorMsg = case Reason of
+                                not_purged -> <<"module has old processes, cannot purge">>;
+                                _ -> iolist_to_binary(io_lib:format("~p", [Reason]))
+                            end,
+                            {#{success => false, error => ErrorMsg}, State}
                     end;
                 {error, Reason} ->
                     io:format("[self] Failed to archive ~p: ~p~n", [M, Reason]),
                     % Try to load anyway
                     case code:load_file(M) of
                         {module, M} -> {#{success => true, module => M, archived => false}, State};
-                        {error, Reason} -> {{error, Reason}, State}
+                        {error, Reason2} ->
+                            ErrorMsg = case Reason2 of
+                                not_purged -> <<"module has old processes, cannot purge">>;
+                                _ -> iolist_to_binary(io_lib:format("~p", [Reason2]))
+                            end,
+                            {#{success => false, error => ErrorMsg}, State}
                     end
             end
     end.
@@ -168,6 +179,24 @@ restore_version(M, VersionPath) ->
     end.
 
 %% Module info
+
+mod_info(M, State) ->
+    #{
+        name => M, 
+        loaded => code:is_loaded(M) =/= false,
+        path => case code:which(M) of 
+            non_existing -> undefined; 
+            P -> list_to_binary(P) 
+        end,
+        current_version => get_current_version_from_state(M, State)
+    }.
+
+get_current_version_from_state(M, State) ->
+    Versions = maps:get(M, State#state.versions, []),
+    case Versions of
+        [{Path, _} | _] -> Path;
+        _ -> undefined
+    end.
 
 mod_info(M) ->
     #{

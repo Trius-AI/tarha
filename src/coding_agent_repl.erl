@@ -1,5 +1,5 @@
 -module(coding_agent_repl).
--export([start/0, start/1]).
+-export([start/0, start/1, loop/2]).
 -export([rl/0]).
 
 -define(HISTORY_FILE, ".tarha/history").
@@ -7,36 +7,44 @@
 start() ->
     start([]).
 start(_Args) ->
-    application:ensure_all_started(coding_agent),
-    
-    io:format("~n"),
-    io:format("╔════════════════════════════════════════════════════════════╗~n"),
-    io:format("║       Coding Agent REPL - Interactive Shell                ║~n"),
-    io:format("║       Model: ~s~n", [get_model()]),
-    io:format("╠════════════════════════════════════════════════════════════╣~n"),
-    io:format("║ Commands:                                                  ║~n"),
-    io:format("║   /help          - Show this help                         ║~n"),
-    io:format("║   /status        - Show session/memory status            ║~n"),
-    io:format("║   /history       - Show conversation history               ║~n"),
-    io:format("║   /tools         - List available tools                    ║~n"),
-    io:format("║   /modules       - List agent modules                      ║~n"),
-    io:format("║   /reload <mod>  - Hot reload a module                    ║~n"),
-    io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
-    io:format("║   /restore <id>  - Restore from checkpoint                ║~n"),
-    io:format("║   /clear         - Clear session history                  ║~n"),
-    io:format("║   /trim          - Force memory cleanup                    ║~n"),
-    io:format("║   /quit, /exit   - Exit the REPL                          ║~n"),
-    io:format("╚════════════════════════════════════════════════════════════╝~n"),
-    io:format("~n"),
-    
-    {ok, {SessionId, _Pid}} = coding_agent_session:new(),
-    io:format("Session started: ~s~n~n", [SessionId]),
-    
-    History = load_history(),
-    
-    io:format("Type your message and press Enter (/help for commands):~n~n"),
-    loop(SessionId, History),
-    ok.
+    try
+        application:ensure_all_started(coding_agent),
+        
+        io:format("~n"),
+        io:format("╔════════════════════════════════════════════════════════════╗~n"),
+        io:format("║       Coding Agent REPL - Interactive Shell                ║~n"),
+        io:format("║       Model: ~s~n", [get_model()]),
+        io:format("╠════════════════════════════════════════════════════════════╣~n"),
+        io:format("║ Commands:                                                  ║~n"),
+        io:format("║   /help          - Show this help                         ║~n"),
+        io:format("║   /status        - Show session/memory status            ║~n"),
+        io:format("║   /history       - Show conversation history               ║~n"),
+        io:format("║   /tools         - List available tools                    ║~n"),
+        io:format("║   /modules       - List agent modules                      ║~n"),
+        io:format("║   /reload <mod>  - Hot reload a module                    ║~n"),
+        io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
+        io:format("║   /restore <id>  - Restore from checkpoint                ║~n"),
+        io:format("║   /clear         - Clear session history                  ║~n"),
+        io:format("║   /trim           - Force memory cleanup                    ║~n"),
+        io:format("║   /quit, /exit   - Exit the REPL                          ║~n"),
+        io:format("╚════════════════════════════════════════════════════════════╝~n"),
+        io:format("~n"),
+        
+        {ok, {SessionId, _Pid}} = coding_agent_session:new(),
+        io:format("Session started: ~s~n~n", [SessionId]),
+        
+        History = load_history(),
+        
+        io:format("Type your message and press Enter (/help for commands):~n~n"),
+        loop(SessionId, History),
+        ok
+    catch
+        Type:Error:Stack ->
+            io:format("~n❌ Failed to start REPL: ~p:~p~n", [Type, Error]),
+            io:format("Stack: ~p~n", [Stack]),
+            init:stop(1),
+            ok
+    end.
 
 rl() ->
     start().
@@ -72,7 +80,7 @@ loop(SessionId, History) ->
                 _ -> 
                     case process_input(SessionId, History, Input) of
                         {continue, NewHistory} ->
-                            loop(SessionId, NewHistory);
+                            ?MODULE:loop(SessionId, NewHistory);
                         stop ->
                             ok
                     end
@@ -149,7 +157,7 @@ process_input_impl(SessionId, History, Input) ->
     % Convert binary to list first
     process_input_impl(SessionId, History, io_lib:format("~s", [Input])).
 
-process_command(SessionId, History, "help" ++ _) ->
+process_command(SessionId, History, "help" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("~nCommands:~n"),
     io:format("  /help           - Show this help~n"),
     io:format("  /status         - Show session & memory status~n"),
@@ -159,6 +167,7 @@ process_command(SessionId, History, "help" ++ _) ->
     io:format("  /reload <mod>  - Hot reload a module~n"),
     io:format("  /checkpoint     - Create checkpoint~n"),
     io:format("  /restore <id>  - Restore from checkpoint~n"),
+    io:format("  /compact        - Compact session (summarize and archive old context)~n"),
     io:format("  /sessions       - List saved sessions~n"),
     io:format("  /load <id>      - Load a saved session~n"),
     io:format("  /save           - Save current session~n"),
@@ -168,11 +177,9 @@ process_command(SessionId, History, "help" ++ _) ->
     io:format("  /reports        - List crash/fix reports~n"),
     io:format("  /fix <id>       - Attempt auto-fix~n"),
     io:format("  /dump <file>   - Dump context to file (.md/.json/.txt)~n"),
-    io:format("  /test_tool      - Test tool calling~n"),
-    io:format("  /quit           - Exit the REPL~n~n"),
     {continue, History};
     
-process_command(SessionId, History, "status" ++ _) ->
+process_command(SessionId, History, "status" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("~nSession Status:~n"),
     try coding_agent_session:stats(SessionId) of
         {ok, Stats} ->
@@ -204,7 +211,7 @@ process_command(SessionId, History, "status" ++ _) ->
     io:format("  Checkpoints: ~p~n~n", [length(Ckpts)]),
     {continue, History};
     
-process_command(SessionId, History, "history" ++ _) ->
+process_command(SessionId, History, "history" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     {ok, Messages} = coding_agent_session:history(SessionId),
     io:format("~nConversation History:~n"),
     lists:foreach(fun(Msg) ->
@@ -219,7 +226,7 @@ process_command(SessionId, History, "history" ++ _) ->
     io:format("~n"),
     {continue, History};
     
-process_command(SessionId, History, "tools" ++ _) ->
+process_command(SessionId, History, "tools" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     Tools = coding_agent_tools:tools(),
     io:format("~nAvailable Tools (~p):~n", [length(Tools)]),
     lists:foreach(fun(Tool) ->
@@ -229,7 +236,7 @@ process_command(SessionId, History, "tools" ++ _) ->
     io:format("~n"),
     {continue, History};
     
-process_command(SessionId, History, "modules" ++ _) ->
+process_command(SessionId, History, "modules" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     Modules = try coding_agent_self:get_modules() of
         L when is_list(L) -> L;
         {ok, L} -> L;
@@ -256,18 +263,25 @@ process_command(SessionId, History, "reload " ++ ModuleName) ->
     case ModAtom of
         _ when is_atom(ModAtom) ->
             io:format("Reloading ~p...~n", [ModAtom]),
-            case coding_agent_self:reload_module(ModAtom) of
+            try coding_agent_self:reload_module(ModAtom) of
                 #{success := true} ->
                     io:format("✓ Module ~p reloaded successfully~n~n", [ModAtom]);
                 #{success := false, error := Error} ->
-                    io:format("✗ Failed to reload: ~s~n~n", [Error])
+                    io:format("✗ Failed to reload: ~s~n~n", [Error]);
+                Other ->
+                    io:format("✗ Unexpected result: ~p~n~n", [Other])
+            catch
+                Type:Error:Stack ->
+                    io:format("✗ Reload crashed: ~p:~p~n", [Type, Error]),
+                    report_crash(Type, Error, Stack),
+                    {continue, History}
             end,
             {continue, History};
         _ ->
             {continue, History}
     end;
     
-process_command(SessionId, History, "checkpoint" ++ _) ->
+process_command(SessionId, History, "checkpoint" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     case coding_agent_self:create_checkpoint() of
         #{success := true, id := Id} ->
             io:format("✓ Checkpoint created: ~s~n~n", [Id]);
@@ -286,7 +300,7 @@ process_command(SessionId, History, "restore " ++ CkptId) ->
     end,
     {continue, History};
     
-process_command(SessionId, History, "clear" ++ _) ->
+process_command(SessionId, History, "clear" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     try coding_agent_session:clear(SessionId) of
         _ -> io:format("✓ Session history cleared~n~n")
     catch _:_ ->
@@ -294,7 +308,7 @@ process_command(SessionId, History, "clear" ++ _) ->
     end,
     {continue, History};
     
-process_command(SessionId, History, "trim" ++ _) ->
+process_command(SessionId, History, "trim" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("Trimming memory...~n"),
     try coding_agent_process_monitor:trim() of
         _ -> ok
@@ -310,8 +324,23 @@ process_command(SessionId, History, "trim" ++ _) ->
         io:format("✓ Memory trimmed~n~n")
     end,
     {continue, History};
-    
-process_command(SessionId, History, "crashes" ++ _) ->
+
+process_command(SessionId, History, "compact" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
+    io:format("Compacting session...~n"),
+    try coding_agent_session:compact(SessionId) of
+        {ok, #{archived_as := ArchiveId, summary_size := SummarySize}} ->
+            io:format("✓ Session compacted.~n"),
+            io:format("  Archived as: ~s~n", [ArchiveId]),
+            io:format("  Summary size: ~p bytes~n~n", [SummarySize]);
+        {error, Reason} ->
+            io:format("✗ Compaction failed: ~p~n~n", [Reason])
+    catch
+        Type:Error ->
+            io:format("✗ Compaction crashed: ~p:~p~n~n", [Type, Error])
+    end,
+    {continue, History};
+
+process_command(SessionId, History, "crashes" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     Crashes = try coding_agent_healer:get_crashes() of
         L when is_list(L) -> L;
         {ok, L} -> L;
@@ -330,7 +359,7 @@ process_command(SessionId, History, "crashes" ++ _) ->
     io:format("Use /reports to list crash report files~n~n"),
     {continue, History};
 
-process_command(SessionId, History, "reports" ++ _) ->
+process_command(SessionId, History, "reports" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     ReportDir = ".coding_agent_reports",
     case filelib:is_dir(ReportDir) of
         false ->
@@ -358,7 +387,7 @@ process_command(SessionId, History, "fix " ++ CrashId) ->
     end,
     {continue, History};
     
-process_command(SessionId, History, "sessions" ++ _) ->
+process_command(SessionId, History, "sessions" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("~nSaved Sessions:~n~n"),
     case coding_agent_session:list_saved_sessions() of
         {ok, SessionIds} when is_list(SessionIds) ->
@@ -395,7 +424,7 @@ process_command(SessionId, History, "load " ++ SessionIdArg) ->
             {continue, History}
     end;
 
-process_command(SessionId, History, "save" ++ _) ->
+process_command(SessionId, History, "save" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("Saving session ~s...~n", [SessionId]),
     case coding_agent_session:save_session(SessionId) of
         {ok, SavedId} ->
@@ -405,12 +434,12 @@ process_command(SessionId, History, "save" ++ _) ->
     end,
     {continue, History};
 
-process_command(_SessionId, History, "quit" ++ _) ->
+process_command(_SessionId, History, "quit" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     save_history(History),
     io:format("Goodbye!~n"),
     stop;
     
-process_command(_SessionId, History, "exit" ++ _) ->
+process_command(_SessionId, History, "exit" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     save_history(History),
     io:format("Goodbye!~n"),
     stop;
@@ -424,7 +453,7 @@ process_command(SessionId, History, "dump " ++ Args) ->
     dump_context(SessionId, History, Filename, Format),
     {continue, History};
 
-process_command(SessionId, History, "dump" ++ _) ->
+process_command(SessionId, History, "dump" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     io:format("~nUsage: /dump <filename> [format]~n"),
     io:format("  /dump context.md        - Dump full context to markdown~n"),
     io:format("  /dump context.json      - Dump full context to JSON~n"),
@@ -432,12 +461,8 @@ process_command(SessionId, History, "dump" ++ _) ->
     io:format("~n"),
     {continue, History};
 
-process_command(SessionId, History, "test_tool" ++ _) ->
-    io:format("~nCalling test_tool...~n"),
-    Result = coding_agent_tools:execute(<<"test_tool">>, #{}),
-    io:format("Result: ~p~n~n", [Result]),
-    {continue, History};
-    
+
+
 process_command(SessionId, History, Unknown) ->
     io:format("Unknown command: /~s~nType /help for available commands.~n~n", [Unknown]),
     {continue, History}.
@@ -449,31 +474,62 @@ process_message(SessionId, History, Input) ->
     io:format("~nThinking...~n"),
     try coding_agent_session:ask(SessionId, Message) of
         {ok, Response, Thinking, _History} ->
-            io:format("~n--- Thinking ---~n~s~n--- Response ---~n", [Thinking]),
+            case Thinking of
+                <<>> -> ok;
+                _ -> 
+                    io:format("~n--- Thinking ---~n~s~n", [Thinking])
+            end,
+            io:format("~n--- Response ---~n"),
             print_response(Response),
             io:format("~n"),
             {continue, NewHistory};
         {error, Reason} ->
             io:format("Error: ~p~n~n", [Reason]),
+            report_error(Reason),
             {continue, NewHistory}
     catch
         Type:Error:Stacktrace ->
             io:format("~n⚠ Session crashed: ~p:~p~n", [Type, Error]),
-            case whereis(coding_agent_healer) of
-                undefined -> ok;
-                _ -> 
-                    {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
-                    io:format("Crash logged. ~n"),
-                    case maps:get(suggested_fix, CrashAnalysis, #{}) of
-                        #{hint := Hint} ->
-                            io:format("Suggestion: ~s~n", [Hint]);
-                        _ -> ok
-                    end
-            end,
+            report_crash(Type, Error, Stacktrace),
             io:format("Creating new session and continuing...~n"),
             {ok, {NewSessionId, _}} = coding_agent_session:new(),
             io:format("New session: ~s~n~n", [NewSessionId]),
             {continue, NewHistory}
+    end.
+
+report_error(Reason) ->
+    % Don't log HTTP/API errors to crash report - they're handled by retry
+    case is_http_error(Reason) of
+        true ->
+            io:format("(API error, will retry automatically)~n");
+        false ->
+            io:format("Error: ~p~n", [Reason]),
+            case whereis(coding_agent_healer) of
+                undefined -> ok;
+                _ ->
+                    Stacktrace = try throw(fake) catch _:_:St -> St end,
+                    coding_agent_healer:report_crash(repl_error, Reason, Stacktrace),
+                    io:format("Error logged.~n")
+            end
+    end.
+
+is_http_error({http_error, _, _}) -> true;
+is_http_error({status, _, _}) -> true;
+is_http_error(max_retries_exceeded) -> true;
+is_http_error(timeout) -> true;
+is_http_error(_) -> false.
+
+report_crash(Type, Error, Stacktrace) ->
+    case whereis(coding_agent_healer) of
+        undefined -> ok;
+        _ ->
+            coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace),
+            io:format("Crash logged.~n"),
+            {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
+            case maps:get(suggested_fix, CrashAnalysis, #{}) of
+                #{hint := Hint} -> io:format("Suggestion: ~s~n", [Hint]);
+                _ -> ok
+            end
     end.
 
 dump_context(SessionId, History, Filename, Format0) ->
