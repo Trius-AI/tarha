@@ -299,15 +299,37 @@ format_stacktrace(Stacktrace) ->
 classify_error({badarg, _}) -> badarg;
 classify_error({badmatch, _}) -> badmatch;
 classify_error({case_clause, _}) -> case_clause;
+classify_error({if_clause, _}) -> if_clause;
+classify_error({try_clause, _}) -> try_clause;
 classify_error({function_clause, _}) -> function_clause;
 classify_error({undef, _}) -> undefined_function;
 classify_error({noproc, _}) -> process_not_found;
 classify_error({timeout, _}) -> timeout;
-classify_error({exit, _}) -> exit_signal;
+classify_error({exit, Reason}) -> classify_exit_reason(Reason);
 classify_error({error, Reason}) -> classify_error(Reason);
+classify_error({throw, _}) -> throw_error;
+classify_error(badarg) -> badarg;
+classify_error(badmatch) -> badmatch;
+classify_error(case_clause) -> case_clause;
+classify_error(if_clause) -> if_clause;
+classify_error(function_clause) -> function_clause;
+classify_error(undef) -> undefined_function;
+classify_error(noproc) -> process_not_found;
+classify_error(timeout) -> timeout;
 classify_error(error) -> error;
 classify_error(Reason) when is_atom(Reason) -> Reason;
 classify_error(_) -> unknown.
+
+classify_exit_reason(normal) -> normal_exit;
+classify_exit_reason(killed) -> killed;
+classify_exit_reason({shutdown, _}) -> shutdown;
+classify_exit_reason({noproc, _}) -> process_not_found;
+classify_exit_reason({timeout, _}) -> timeout;
+classify_exit_reason({badarg, _}) -> badarg;
+classify_exit_reason({badmatch, _}) -> badmatch;
+classify_exit_reason({case_clause, _}) -> case_clause;
+classify_exit_reason({undef, _}) -> undefined_function;
+classify_exit_reason(_) -> exit_signal.
 
 extract_modules([]) -> [];
 extract_modules([{M, _, _, _} | Rest]) ->
@@ -334,6 +356,12 @@ suggest_fix(Error, Stacktrace) ->
         case_clause ->
             suggest_with_rollback(add_case_clause, Modules,
                 "Missing case clause - add handling for unexpected value", RollbackAvailable);
+        if_clause ->
+            suggest_with_rollback(add_if_clause, Modules,
+                "No if clause matched - add condition for missing case", RollbackAvailable);
+        try_clause ->
+            suggest_with_rollback(add_try_clause, Modules,
+                "No try clause matched - add catch for exception", RollbackAvailable);
         function_clause ->
             suggest_with_rollback(fix_function_arity, Modules,
                 "No matching function clause - check arity or add clause", RollbackAvailable);
@@ -346,15 +374,27 @@ suggest_fix(Error, Stacktrace) ->
         timeout ->
             suggest_with_rollback(increase_timeout_or_fix_hang, Modules,
                 "Operation timed out - increase timeout or fix blocking code", RollbackAvailable);
+        normal_exit ->
+            suggest_with_rollback(investigate, Modules,
+                "Process exited normally - this may be intentional", RollbackAvailable);
+        killed ->
+            suggest_with_rollback(investigate, Modules,
+                "Process was killed - check for supervisor restart or explicit exit", RollbackAvailable);
+        shutdown ->
+            suggest_with_rollback(investigate, Modules,
+                "Process shutdown - check application shutdown logic", RollbackAvailable);
+        throw_error ->
+            suggest_with_rollback(investigate, Modules,
+                "Exception thrown - check error handling", RollbackAvailable);
         exit_signal ->
             suggest_with_rollback(investigate, Modules,
                 "Process exited - check linked process or exit reason", RollbackAvailable);
         error ->
             suggest_with_rollback(investigate, Modules,
-                "Error occurred - manual investigation required", RollbackAvailable);
+                "Error occurred - check error reason", RollbackAvailable);
         _ ->
             suggest_with_rollback(investigate, Modules,
-                "Unknown error type - manual investigation required", RollbackAvailable)
+                "Review stacktrace for error source", RollbackAvailable)
     end.
 
 suggest_with_rollback(Action, Modules, Hint, true) ->
