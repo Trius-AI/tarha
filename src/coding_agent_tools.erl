@@ -1278,9 +1278,9 @@ generate_commit_message(Diff) ->
     % Generate message based on patterns
     Msg = case ChangeType of
         {add, Files} when Files =/= [] ->
-            list_to_binary(io_lib:format("Add ~p new file(s): ~s", [length(Files), string:join(Files, ", ")]));
+            iolist_to_binary(io_lib:format("Add ~p new file(s): ~s", [length(Files), string:join(Files, ", ")]));
         {modify, Files} when Files =/= [] ->
-            list_to_binary(io_lib:format("Update ~p file(s): ~s", [length(Files), string:join(Files, ", ")]));
+            iolist_to_binary(io_lib:format("Update ~p file(s): ~s", [length(Files), string:join(Files, ", ")]));
         {refactor, _} ->
             <<"Refactor code structure">>;
         {fix, _} ->
@@ -1292,7 +1292,7 @@ generate_commit_message(Diff) ->
         {test, _} ->
             <<"Add or update tests">>;
         _ ->
-            list_to_binary(io_lib:format("Update ~p file(s)", [AddedCount]))
+            iolist_to_binary(io_lib:format("Update ~p file(s)", [AddedCount]))
     end,
     Msg.
 
@@ -1399,10 +1399,10 @@ generate_review_summary(Diff) ->
     Summary = io_lib:format("Changed ~p files (+~p/-~p lines).", [Files, Added, Removed]),
     
     case Issues of
-        [] -> list_to_binary(Summary);
+        [] -> iolist_to_binary(Summary);
         _ -> 
             IssueList = lists:map(fun(I) -> binary_to_list(I) end, Issues),
-            list_to_binary(Summary ++ " Issues: " ++ string:join(IssueList, ", "))
+            iolist_to_binary([Summary, " Issues: ", string:join(IssueList, ", ")])
     end.
 
 % Test generation helpers
@@ -1440,7 +1440,7 @@ generate_tests_by_ext(".erl", FuncName, _Content, <<"eunit">>) ->
             generate_test_case(FuncName, "with edge cases"),
             generate_test_case(FuncName, "with invalid input")
         ],
-        <<"code">> => list_to_binary(io_lib:format("~s_test() ->~n    % TODO: Add test cases~n    ok.~n", [FuncName]))
+        <<"code">> => iolist_to_binary(io_lib:format("~s_test() ->~n    % TODO: Add test cases~n    ok.~n", [FuncName]))
     };
 generate_tests_by_ext(".ex", FuncName, _Content, <<"exunit">>) ->
     #{
@@ -1450,7 +1450,7 @@ generate_tests_by_ext(".ex", FuncName, _Content, <<"exunit">>) ->
             <<"test with edge cases">>,
             <<"test with invalid input">>
         ],
-        <<"code">> => list_to_binary(io_lib:format("test \"~s with valid input\" do~n  # TODO: Add test~nend~n", [FuncName]))
+        <<"code">> => iolist_to_binary(io_lib:format("test \"~s with valid input\" do~n  # TODO: Add test~nend~n", [FuncName]))
     };
 generate_tests_by_ext(_, FuncName, _Content, _) ->
     #{
@@ -1460,7 +1460,7 @@ generate_tests_by_ext(_, FuncName, _Content, _) ->
     }.
 
 generate_test_case(FuncName, Description) ->
-    list_to_binary(io_lib:format("~s_~s_test() ->~n    ?assert(true).", [FuncName, string:replace(Description, " ", "_")])).
+    iolist_to_binary(io_lib:format("~s_~s_test() ->~n    ?assert(true).", [FuncName, string:replace(Description, " ", "_")])).
 
 generate_test_file(FilePath, Tests, Framework) ->
     Ext = filename:extension(FilePath),
@@ -1489,14 +1489,14 @@ generate_test_filename(FilePath, Ext) when is_list(FilePath) ->
 generate_test_content(".erl", <<"eunit">>, Tests) ->
     Includes = <<"-include_lib(\"eunit/include/eunit.hrl\").\n\n">>,
     TestCodes = lists:map(fun(T) -> maps:get(<<"code">>, T, <<>>) end, Tests),
-    list_to_binary([Includes | TestCodes]);
+    iolist_to_binary([Includes | TestCodes]);
 generate_test_content(".ex", <<"exunit">>, Tests) ->
     Includes = <<"defmodule Test do\n  use ExUnit.Case\n\n">>,
     TestCodes = lists:map(fun(T) -> maps:get(<<"code">>, T, <<>>) end, Tests),
-    list_to_binary([Includes | TestCodes] ++ [<<"\nend\n">>]);
+    iolist_to_binary([Includes | TestCodes] ++ [<<"\nend\n">>]);
 generate_test_content(_, _, Tests) ->
     TestCodes = lists:map(fun(T) -> maps:get(<<"code">>, T, <<>>) end, Tests),
-    list_to_binary(TestCodes).
+    iolist_to_binary(TestCodes).
 % Documentation Generation Implementation
 generate_module_docs(Content, FilePath, Style) ->
     Ext = filename:extension(FilePath),
@@ -1621,12 +1621,12 @@ infer_return_type(Code) ->
 generate_doc_from_analysis(FuncName, Params, Returns, <<"edoc">>) ->
     ParamDocs = [io_lib:format("%% @param ~s Description", [P]) || P <- Params],
     ReturnDoc = io_lib:format("%% @returns ~s", [Returns]),
-    list_to_binary(string:join(ParamDocs ++ [ReturnDoc], "\n"));
+    iolist_to_binary(string:join(ParamDocs ++ [ReturnDoc], "\n"));
 generate_doc_from_analysis(FuncName, Params, Returns, <<"exdoc">>) ->
     ParamDocs = [io_lib:format("  * `~s` - Description", [P]) || P <- Params],
-    list_to_binary(string:join(["```erlang"] ++ ParamDocs ++ ["```", "Returns: " ++ binary_to_list(Returns)], "\n"));
+    iolist_to_binary(string:join(["```erlang"] ++ ParamDocs ++ ["```", "Returns: " ++ binary_to_list(Returns)], "\n"));
 generate_doc_from_analysis(FuncName, Params, Returns, _) ->
-    list_to_binary(io_lib:format("Function: ~s(~s) -> ~s", [FuncName, string:join([binary_to_list(P) || P <- Params], ", "), Returns])).
+    iolist_to_binary(io_lib:format("Function: ~s(~s) -> ~s", [FuncName, string:join([binary_to_list(P) || P <- Params], ", "), Returns])).
 
 generate_edoc_header(ModuleName, DocStrings) ->
     ModuleDoc = io_lib:format("%% @doc TODO: Add module documentation\n-module(~s).\n", [ModuleName]),
@@ -1635,7 +1635,7 @@ generate_edoc_header(ModuleName, DocStrings) ->
                                maps:get(<<"function">>, D, <<>>),
                                string:join([binary_to_list(P) || P <- maps:get(<<"params">>, D, [])], ", ")])
                  || D <- DocStrings],
-    list_to_binary([ModuleDoc | FuncDocs]).
+    iolist_to_binary([ModuleDoc | FuncDocs]).
 
 generate_exdoc_header(ModuleName, DocStrings) ->
     ModuleDoc = io_lib:format("@moduledoc \"\"\"TODO: Add module documentation\"\"\"\n\ndefmodule ~s do\n", [ModuleName]),
@@ -1645,7 +1645,7 @@ generate_exdoc_header(ModuleName, DocStrings) ->
                                string:join([binary_to_list(P) || P <- maps:get(<<"params">>, D, [])], ", ")])
                  || D <- DocStrings],
     EndModule = "\nend\n",
-    list_to_binary([ModuleDoc | FuncDocs] ++ [EndModule]).
+    iolist_to_binary([ModuleDoc | FuncDocs] ++ [EndModule]).
 
 % Web Docs Fetcher Implementation
 fetch_package_docs(Package, Language, Version) ->

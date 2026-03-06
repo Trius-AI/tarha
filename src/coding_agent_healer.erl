@@ -648,11 +648,11 @@ add_catch_all_case(Content, StartLine, EndLine) ->
     LastLine = lists:last(CaseLines),
     Indent = find_indent(LastLine),
     CatchAll = <<Indent/binary, "_ -> ok">>,
-
+    
     case binary:match(LastLine, <<"end">>) of
         {0, _} ->
             NewCaseLines = lists:droplast(CaseLines) ++ [CatchAll, <<"end">>],
-            list_to_binary(lists:flatten(lists:join(<<"\n">>, Before ++ NewCaseLines ++ After)));
+            iolist_to_binary(lists:join(<<"\n">>, Before ++ NewCaseLines ++ After));
         _ ->
             Content
     end.
