@@ -503,6 +503,19 @@ tools() ->
                     <<"required">> => [<<"file">>, <<"function">>]
                 }
             }
+        },
+        % Test Tool
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"test_tool">>,
+                <<"description">> => <<"A simple test tool that returns 'hello'.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
         }
     ].
 
@@ -942,6 +955,9 @@ execute(<<"restore_checkpoint">>, #{<<"checkpoint_id">> := CheckpointId}) ->
 execute(<<"list_checkpoints">>, _Args) ->
     {ok, Checkpoints} = coding_agent_self:list_checkpoints(),
     #{<<"success">> => true, <<"checkpoints">> => Checkpoints};
+
+execute(<<"test_tool">>, _Args) ->
+    #{<<"success">> => true, <<"result">> => <<"hello">>};
 
 execute(_Tool, _Args) ->
     #{<<"success">> => false, <<"error">> => <<"Unknown tool">>}.

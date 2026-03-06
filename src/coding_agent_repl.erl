@@ -165,6 +165,7 @@ process_command(SessionId, History, "help" ++ _) ->
     io:format("  /reports        - List crash/fix reports~n"),
     io:format("  /fix <id>       - Attempt auto-fix~n"),
     io:format("  /dump <file>   - Dump context to file (.md/.json/.txt)~n"),
+    io:format("  /test_tool      - Test tool calling~n"),
     io:format("  /quit           - Exit the REPL~n~n"),
     {continue, History};
     
@@ -379,6 +380,12 @@ process_command(SessionId, History, "dump" ++ _) ->
     io:format("  /dump context.json      - Dump full context to JSON~n"),
     io:format("  /dump context.txt       - Dump full context to text~n"),
     io:format("~n"),
+    {continue, History};
+
+process_command(SessionId, History, "test_tool" ++ _) ->
+    io:format("~nCalling test_tool...~n"),
+    Result = coding_agent_tools:execute(<<"test_tool">>, #{}),
+    io:format("Result: ~p~n~n", [Result]),
     {continue, History};
     
 process_command(SessionId, History, Unknown) ->
