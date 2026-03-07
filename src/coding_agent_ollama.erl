@@ -448,7 +448,7 @@ truncate_messages([Msg | Rest], MaxTokens, Acc) ->
 
 %% Model info functions - get context length from Ollama API
 
--define(DEFAULT_CONTEXT_LENGTH, 8192).
+-define(DEFAULT_CONTEXT_LENGTH, 16384).
 
 get_model_context_length(Model) ->
     get_model_context_length(Model, ?DEFAULT_CONTEXT_LENGTH).

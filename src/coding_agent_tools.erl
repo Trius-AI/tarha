@@ -11,7 +11,7 @@
 -define(BACKUP_DIR, ".tarha/backups").
 -define(MAX_BACKUPS, 50).
 -define(OPS_LOG, coding_agent_ops_log).
--define(MAX_TEXT_SIZE, 50000).
+-define(MAX_TEXT_SIZE, 20000).
 -define(PROGRESS_CALLBACK, coding_agent_progress_cb).
 -define(SAFETY_CALLBACK, coding_agent_safety_cb).
 
