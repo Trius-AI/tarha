@@ -1818,9 +1818,11 @@ detect_change_type(Diff) ->
     
     % Check for patterns
     HasTest = lists:any(fun(F) -> string:find(F, "test") =/= nomatch end, Files),
-    HasDoc = lists:any(fun(F) -> string:find(F, "doc") =/= nomatch orelse 
-                                string:suffix(F, "README.md") orelse
-                                string:suffix(F, "CHANGELOG.md") end, Files),
+    HasDoc = lists:any(fun(F) -> 
+        string:find(F, "doc") =/= nomatch orelse 
+        lists:suffix("README.md", F) orelse
+        lists:suffix("CHANGELOG.md", F)
+    end, Files),
     HasNew = string:find(Diff, "new file") =/= nomatch,
     
     case {HasTest, HasDoc, HasNew, Files} of

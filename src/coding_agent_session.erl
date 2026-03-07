@@ -5,6 +5,7 @@
 -export([history/1, clear/1, stop_session/1, sessions/0]).
 -export([open_files/1, close_file/2, stats/1, ask_stream/3, compact/1]).
 -export([save_session/1, load_session/1, list_saved_sessions/0]).
+-export([set_context_length/2, get_context_length/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(state, {
@@ -197,6 +198,26 @@ compact(Session) when is_binary(Session) ->
 compact({_, Pid}) ->
     compact(Pid).
 
+set_context_length(Session, Length) when is_pid(Session) ->
+    gen_server:call(Session, {set_context_length, Length});
+set_context_length(Session, Length) when is_binary(Session) ->
+    case ets:lookup(?SESSIONS_TABLE, Session) of
+        [{_, Pid}] -> set_context_length(Pid, Length);
+        [] -> {error, session_not_found}
+    end;
+set_context_length({_, Pid}, Length) ->
+    set_context_length(Pid, Length).
+
+get_context_length(Session) when is_pid(Session) ->
+    gen_server:call(Session, get_context_length);
+get_context_length(Session) when is_binary(Session) ->
+    case ets:lookup(?SESSIONS_TABLE, Session) of
+        [{_, Pid}] -> get_context_length(Pid);
+        [] -> {error, session_not_found}
+    end;
+get_context_length({_, Pid}) ->
+    get_context_length(Pid).
+
 stop_session(Session) when is_pid(Session) ->
     gen_server:stop(Session);
 stop_session(Session) when is_binary(Session) ->
@@ -373,6 +394,25 @@ handle_call(stats, _From, State = #state{prompt_tokens = PromptTokens, completio
 
 handle_call(clear, _From, State) ->
     {reply, ok, State#state{messages = [], open_files = #{}}};
+
+handle_call(get_context_length, _From, State = #state{context_length = ContextLength, prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET}) ->
+    TotalTokens = PT + CT + ET,
+    {reply, {ok, #{
+        context_length => ContextLength,
+        current_tokens => TotalTokens,
+        usage_percent => case ContextLength > 0 of
+            true -> round((TotalTokens / ContextLength) * 1000) / 10;  % 1 decimal
+            false -> 0.0
+        end
+    }}, State};
+
+handle_call({set_context_length, Length}, _From, State = #state{context_length = OldLength, prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET}) 
+    when is_integer(Length), Length > 0 ->
+    TotalTokens = PT + CT + ET,
+    io:format("[session] Context length changed: ~p -> ~p (current usage: ~p tokens)~n", [OldLength, Length, TotalTokens]),
+    {reply, {ok, #{old_length => OldLength, new_length => Length}}, State#state{context_length = Length}};
+handle_call({set_context_length, Length}, _From, State) ->
+    {reply, {error, {invalid_length, Length}}, State};
 
 handle_call(compact, _From, State = #state{id = Id, messages = Messages, model = Model, prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET}) ->
     TotalTokens = PT + CT + ET,

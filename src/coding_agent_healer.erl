@@ -12,6 +12,7 @@
 -define(CRASH_REPORT_DIR, ".tarha/reports").
 -define(MAX_CRASHES, 100).
 -define(WORKERS, [coding_agent_process_monitor, coding_agent_self, coding_agent_healer]).
+-define(MONITOR_SESSIONS, true).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

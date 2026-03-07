@@ -23,6 +23,7 @@ start(_Args) ->
         io:format("║   /models        - List available Ollama models           ║~n"),
         io:format("║   /model <name>  - Show model details                     ║~n"),
         io:format("║   /switch <name> - Switch to different model              ║~n"),
+        io:format("║   /context [size]- Show/set context size                 ║~n"),
         io:format("║   /modules       - List agent modules                      ║~n"),
         io:format("║   /reload [mod]  - Hot reload module (all if no arg)      ║~n"),
         io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
@@ -100,9 +101,9 @@ sanitize_input(Line) ->
             false -> iolist_to_binary([Line])
         end,
         % Remove control characters and normalize whitespace
-        CleanBin = re:replace(LineBin, "[\\p{C}\\s]+", " ", [global, {return, binary}]),
+        CleanBin = re:replace(LineBin, "[\\p{C}]+", "", [global, {return, binary}]),
         % Remove leading/trailing whitespace
-        Stripped = binary:replace(CleanBin, <<" ">>, <<>>, [{global, true}]),
+        Stripped = re:replace(CleanBin, "^\\s+|\\s+$", "", [global, {return, binary}]),
         % Convert back to list safely
         case unicode:characters_to_list(Stripped, utf8) of
             L when is_list(L) -> L;
@@ -162,6 +163,7 @@ process_command(SessionId, History, "help" ++ Rest) when Rest =:= []; hd(Rest) =
     io:format("  /models         - List available Ollama models~n"),
     io:format("  /model <name>   - Show model details~n"),
     io:format("  /switch <model> - Switch to a different model~n"),
+    io:format("  /context [size] - Show/set max context size~n"),
     io:format("  /modules        - List agent modules~n"),
     io:format("  /reload [mod]  - Hot reload module (all if no arg)~n"),
     io:format("  /checkpoint     - Create checkpoint~n"),
@@ -187,15 +189,21 @@ process_command(SessionId, History, "status" ++ Rest) when Rest =:= []; hd(Rest)
             SessionCompletion = maps:get(<<"session_completion_tokens">>, Stats, 0),
             SessionEstimated = maps:get(<<"session_estimated_tokens">>, Stats, 0),
             SessionTotal = maps:get(<<"session_total_tokens">>, Stats, 0),
+            ContextLength = maps:get(<<"context_length">>, Stats, 0),
+            ContextUsage = maps:get(<<"context_usage_percent">>, Stats, 0.0),
             ToolCalls = maps:get(<<"tool_calls">>, Stats, 0),
             MsgCount = maps:get(<<"message_count">>, Stats, 0),
+            Model = maps:get(<<"model">>, Stats, <<"unknown">>),
+            io:format("  Model:          ~s~n", [Model]),
+            io:format("  Context Limit:  ~p tokens~n", [ContextLength]),
+            io:format("  Context Usage:  ~p tokens (~.1f%)~n", [SessionTotal, ContextUsage]),
+            io:format("  Available:      ~p tokens~n", [ContextLength - SessionTotal]),
             io:format("  Session Tokens:~n"),
             io:format("    Prompt:       ~p~n", [SessionPrompt]),
             io:format("    Completion:   ~p~n", [SessionCompletion]),
             io:format("    Estimated:    ~p~n", [SessionEstimated]),
-            io:format("    Total:        ~p~n", [SessionTotal]),
-            io:format("  Tool calls:    ~p~n", [ToolCalls]),
-            io:format("  Messages:      ~p~n", [MsgCount]),
+            io:format("  Tool calls:     ~p~n", [ToolCalls]),
+            io:format("  Messages:       ~p~n", [MsgCount]),
             
             %% Global token stats from Ollama client
             GlobalPrompt = maps:get(<<"global_prompt_tokens">>, Stats, 0),
@@ -351,6 +359,38 @@ process_command(SessionId, History, "switch " ++ ModelName) ->
             io:format("Session cleared (new model context).~n~n");
         {error, Reason} ->
             io:format("✗ Failed to switch model: ~p~n~n", [Reason])
+    end,
+    {continue, History};
+
+process_command(SessionId, History, "context") ->
+    % Show current context size (no arguments)
+    io:format("~nContext Size:~n"),
+    try coding_agent_session:get_context_length(SessionId) of
+        {ok, #{context_length := CtxLen, current_tokens := CurrentTokens, usage_percent := UsagePct}} ->
+            io:format("  Max Context:    ~p tokens~n", [CtxLen]),
+            io:format("  Current Usage: ~p tokens (~.1f%)~n", [CurrentTokens, UsagePct]),
+            io:format("  Available:     ~p tokens~n", [CtxLen - CurrentTokens]),
+            io:format("~n"),
+            io:format("  Usage: /context <size>  - Set new max context size~n~n");
+        {error, Reason} ->
+            io:format("  Error: ~p~n~n", [Reason])
+    catch _:Error ->
+        io:format("  Error: ~p~n~n", [Error])
+    end,
+    {continue, History};
+process_command(SessionId, History, "context " ++ SizeStr) ->
+    % Set context size
+    case string:to_integer(safe_trim(SizeStr)) of
+        {Size, []} when Size > 0 ->
+            io:format("Setting context size to ~p tokens...~n", [Size]),
+            case coding_agent_session:set_context_length(SessionId, Size) of
+                {ok, #{old_length := OldLen, new_length := NewLen}} ->
+                    io:format("✓ Context size changed: ~p -> ~p tokens~n~n", [OldLen, NewLen]);
+                {error, Reason} ->
+                    io:format("✗ Failed to set context size: ~p~n~n", [Reason])
+            end;
+        _ ->
+            io:format("✗ Invalid size: '~s'. Must be a positive integer.~n~n", [safe_trim(SizeStr)])
     end,
     {continue, History};
     
