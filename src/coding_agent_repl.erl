@@ -81,19 +81,12 @@ loop(SessionId, History) ->
                     case process_input(SessionId, History, Input) of
                         {continue, NewHistory} ->
                             ?MODULE:loop(SessionId, NewHistory);
+                        {new_session, NewSessionId, NewHistory} ->
+                            ?MODULE:loop(NewSessionId, NewHistory);
                         stop ->
                             ok
                     end
             end
-    catch
-        Type:Error:Stacktrace ->
-            io:format("~n⚠ Crash caught: ~p:~p~n", [Type, Error]),
-            case whereis(coding_agent_healer) of
-                undefined -> ok;
-                _ -> coding_agent_healer:analyze_crash(Type, Stacktrace)
-            end,
-            io:format("Session preserved. Continuing...~n~n"),
-            ?MODULE:loop(SessionId, History)
     end.
 
 sanitize_input(Line) ->
@@ -483,6 +476,12 @@ process_message(SessionId, History, Input) ->
             print_response(Response),
             io:format("~n"),
             {continue, NewHistory};
+        {error, session_not_found} ->
+            io:format("~nSession expired. Creating new session...~n"),
+            {ok, {NewSessionId, _}} = coding_agent_session:new(),
+            io:format("New session: ~s~n~n", [NewSessionId]),
+            % Retry with new session
+            process_message(NewSessionId, NewHistory, Input);
         {error, Reason} ->
             io:format("Error: ~p~n~n", [Reason]),
             report_error(Reason, SessionId),
@@ -492,9 +491,11 @@ process_message(SessionId, History, Input) ->
             io:format("~n⚠ Session crashed: ~p:~p~n", [Type, Error]),
             report_crash(Type, Error, Stacktrace, SessionId),
             io:format("Creating new session and continuing...~n"),
+            % Remove dead session from ETS
+            ets:delete(coding_agent_sessions, SessionId),
             {ok, {NewSessionId, _}} = coding_agent_session:new(),
             io:format("New session: ~s~n~n", [NewSessionId]),
-            {continue, NewHistory}
+            {new_session, NewSessionId, NewHistory}
     end.
 
 report_error(Reason, SessionId) ->
