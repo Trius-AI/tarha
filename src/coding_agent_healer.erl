@@ -367,8 +367,16 @@ suggest_fix(Error, Stacktrace) ->
             suggest_with_rollback(fix_function_arity, Modules,
                 "No matching function clause - check arity or add clause", RollbackAvailable);
         undefined_function ->
-            suggest_with_rollback(export_or_define_function, Modules,
-                "Function not found - add -export or define function", RollbackAvailable);
+            % Try to find the function in other modules
+            Found = find_function_in_modules(Error, Stacktrace),
+            case Found of
+                {ok, CorrectModule} ->
+                    suggest_with_rollback(use_correct_module, Modules,
+                        io_lib:format("Function exists in module ~p - use ~p instead", [CorrectModule, CorrectModule]), RollbackAvailable);
+                not_found ->
+                    suggest_with_rollback(export_or_define_function, Modules,
+                        "Function not found - add -export or define function", RollbackAvailable)
+            end;
         process_not_found ->
             suggest_with_rollback(check_process_start, Modules,
                 "Process not found - ensure dependent process is started", RollbackAvailable);
@@ -415,6 +423,23 @@ can_rollback([M | _]) ->
                 _ -> false
             end
     end.
+
+%% Find a function that exists in another module
+%% Useful for suggesting correct module when undef error occurs
+find_function_in_modules({undef, {WrongModule, FunctionName, Arity}}, _Stacktrace) ->
+    %% Common modules to search
+    CommonModules = [lists, string, binary, file, filename, os, io, 
+                     proplists, maps, sets, dict, queue, array,
+                     re, unicode, calendar, timer, erlang],
+    Found = lists:filter(fun(Mod) ->
+        erlang:function_exported(Mod, FunctionName, Arity)
+    end, CommonModules -- [WrongModule]),
+    case Found of
+        [CorrectModule | _] -> {ok, CorrectModule};
+        [] -> not_found
+    end;
+find_function_in_modules(_Error, _Stacktrace) ->
+    not_found.
 
 attempt_auto_fix(CrashData) ->
     #{analysis := Analysis} = CrashData,
