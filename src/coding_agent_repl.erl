@@ -21,7 +21,7 @@ start(_Args) ->
         io:format("║   /history       - Show conversation history               ║~n"),
         io:format("║   /tools         - List available tools                    ║~n"),
         io:format("║   /modules       - List agent modules                      ║~n"),
-        io:format("║   /reload <mod>  - Hot reload a module                    ║~n"),
+        io:format("║   /reload [mod]  - Hot reload module (all if no arg)      ║~n"),
         io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
         io:format("║   /restore <id>  - Restore from checkpoint                ║~n"),
         io:format("║   /clear         - Clear session history                  ║~n"),
@@ -157,7 +157,7 @@ process_command(SessionId, History, "help" ++ Rest) when Rest =:= []; hd(Rest) =
     io:format("  /history        - Show conversation history~n"),
     io:format("  /tools          - List available tools~n"),
     io:format("  /modules        - List agent modules~n"),
-    io:format("  /reload <mod>  - Hot reload a module~n"),
+    io:format("  /reload [mod]  - Hot reload module (all if no arg)~n"),
     io:format("  /checkpoint     - Create checkpoint~n"),
     io:format("  /restore <id>  - Restore from checkpoint~n"),
     io:format("  /compact        - Compact session (summarize and archive old context)~n"),
@@ -247,31 +247,59 @@ process_command(SessionId, History, "modules" ++ Rest) when Rest =:= []; hd(Rest
     io:format("~n"),
     {continue, History};
     
-process_command(SessionId, History, "reload " ++ ModuleName) ->
-    ModAtom = try list_to_existing_atom(safe_trim(ModuleName))
-    catch error:badarg -> 
-        io:format("Error: Unknown module ~p~n", [ModuleName]),
-        {continue, History}
-    end,
-    case ModAtom of
-        _ when is_atom(ModAtom) ->
-            io:format("Reloading ~p...~n", [ModAtom]),
-            try coding_agent_self:reload_module(ModAtom) of
-                #{success := true} ->
-                    io:format("✓ Module ~p reloaded successfully~n~n", [ModAtom]);
-                #{success := false, error := Error} ->
-                    io:format("✗ Failed to reload: ~s~n~n", [Error]);
+process_command(SessionId, History, "reload" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
+    case safe_trim(Rest) of
+        "" ->
+            io:format("Reloading all modules...~n"),
+            try coding_agent_self:reload_all() of
+                Results when is_list(Results) ->
+                    Successes = [M || {M, #{success := true}} <- Results],
+                    Failures = [{M, E} || {M, #{success := false, error := E}} <- Results],
+                    io:format("✓ Reloaded ~p modules successfully~n", [length(Successes)]),
+                    case Failures of
+                        [] -> ok;
+                        _ ->
+                            io:format("✗ Failed to reload ~p modules:~n", [length(Failures)]),
+                            lists:foreach(fun({M, E}) ->
+                                io:format("    ~p: ~s~n", [M, E])
+                            end, Failures)
+                    end,
+                    io:format("~n");
                 Other ->
                     io:format("✗ Unexpected result: ~p~n~n", [Other])
             catch
                 Type:Error:Stack ->
-                    io:format("✗ Reload crashed: ~p:~p~n", [Type, Error]),
+                    io:format("✗ Reload all crashed: ~p:~p~n", [Type, Error]),
                     report_crash(Type, Error, Stack),
                     {continue, History}
             end,
             {continue, History};
-        _ ->
-            {continue, History}
+        ModuleName ->
+            ModAtom = try list_to_existing_atom(ModuleName)
+            catch error:badarg -> 
+                io:format("Error: Unknown module ~p~n", [ModuleName]),
+                {continue, History}
+            end,
+            case ModAtom of
+                _ when is_atom(ModAtom) ->
+                    io:format("Reloading ~p...~n", [ModAtom]),
+                    try coding_agent_self:reload_module(ModAtom) of
+                        #{success := true} ->
+                            io:format("✓ Module ~p reloaded successfully~n~n", [ModAtom]);
+                        #{success := false, error := Error} ->
+                            io:format("✗ Failed to reload: ~s~n~n", [Error]);
+                        Other ->
+                            io:format("✗ Unexpected result: ~p~n~n", [Other])
+                    catch
+                        Type:Error:Stack ->
+                            io:format("✗ Reload crashed: ~p:~p~n", [Type, Error]),
+                            report_crash(Type, Error, Stack),
+                            {continue, History}
+                    end,
+                    {continue, History};
+                _ ->
+                    {continue, History}
+            end
     end;
     
 process_command(SessionId, History, "checkpoint" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
