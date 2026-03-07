@@ -559,8 +559,7 @@ execute_tool_calls(ToolCalls, OpenFiles) when is_list(ToolCalls) ->
         (_, Acc) -> Acc
     end, OpenFiles, Results),
     ResultList = [R || {R, _} <- Results],
-    % Limit result size to prevent crashes on large git status/diff output
-    SafeResults = limit_results(ResultList, 100000),
+    SafeResults = limit_results(ResultList, 20000),
     ResultBin = serialize_results(SafeResults),
     {ResultBin, NewOpenFiles}.
 

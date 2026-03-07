@@ -550,7 +550,9 @@ process_message(SessionId, History, Input, RetryCount) ->
             io:format("~n⚠ Session crashed: ~p:~p~n", [Type, Error]),
             report_crash(Type, Error, Stacktrace, SessionId),
             io:format("Creating new session and continuing...~n"),
-            ets:delete(coding_agent_sessions, SessionId),
+            try ets:delete(coding_agent_sessions, SessionId)
+            catch _:_ -> ok
+            end,
             {ok, {NewSessionId, _}} = coding_agent_session:new(),
             io:format("New session: ~s~n~n", [NewSessionId]),
             {new_session, NewSessionId, NewHistory}

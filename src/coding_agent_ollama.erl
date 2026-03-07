@@ -5,7 +5,8 @@
 -export([get_model_info/1, get_model_context_length/1, get_model_context_length/2]).
 
 -define(MAX_RETRIES, 20).
--define(RETRY_DELAY_BASE, 1000).  % 1 second base, exponential backoff.
+-define(RETRY_DELAY_BASE, 5000).  % 5 second base.
+-define(RETRY_DELAY_MAX, 60000).  % 1 minute maximum.
 -define(TOKEN_CACHE_TABLE, coding_agent_token_cache).
 -define(TOKEN_CACHE_MAX_SIZE, 10000).  % Max cached entries
 
@@ -42,27 +43,23 @@ do_with_retry(Fun) ->
 do_with_retry(Fun, RetryCount) when RetryCount >= ?MAX_RETRIES ->
     {error, max_retries_exceeded};
 do_with_retry(Fun, RetryCount) ->
+    Delay = min(?RETRY_DELAY_BASE * round(math:pow(2, RetryCount)), ?RETRY_DELAY_MAX),
     case Fun() of
         {ok, Result} ->
             {ok, Result};
         {error, {status, StatusCode, _Body}} when StatusCode =:= 408; StatusCode =:= 429; StatusCode >= 500 ->
-            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
             io:format("[ollama] HTTP ~p, retrying in ~pms (attempt ~p/~p)~n", 
                       [StatusCode, Delay, RetryCount + 1, ?MAX_RETRIES]),
             timer:sleep(Delay),
             do_with_retry(Fun, RetryCount + 1);
         {error, {status, StatusCode, Body}} ->
-            % Non-retryable status (4xx except 429, 408)
             {error, {http_error, StatusCode, Body}};
         {error, timeout} ->
-            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
             io:format("[ollama] Timeout, retrying in ~pms (attempt ~p/~p)~n", 
                       [Delay, RetryCount + 1, ?MAX_RETRIES]),
             timer:sleep(Delay),
             do_with_retry(Fun, RetryCount + 1);
         {error, Reason} ->
-            % Network errors, etc. - retry
-            Delay = ?RETRY_DELAY_BASE * round(math:pow(2, min(RetryCount, 10))),
             io:format("[ollama] Error ~p, retrying in ~pms (attempt ~p/~p)~n", 
                       [Reason, Delay, RetryCount + 1, ?MAX_RETRIES]),
             timer:sleep(Delay),

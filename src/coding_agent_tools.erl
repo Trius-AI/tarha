@@ -405,6 +405,85 @@ tools() ->
                 }
             }
         },
+        % Undo/Redo Stack
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"undo">>,
+                <<"description">> => <<"Undo the last operation (file edit, etc.). Reverts changes using backup system.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"count">> => #{<<"type">> => <<"integer">>, <<"description">> => <<"Number of operations to undo (default: 1)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"redo">>,
+                <<"description">> => <<"Redo a previously undone operation. Restores changes that were reverted.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"count">> => #{<<"type">> => <<"integer">>, <<"description">> => <<"Number of operations to redo (default: 1)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"undo_history">>,
+                <<"description">> => <<"Get the history of operations that can be undone. Shows recent edit operations.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"count">> => #{<<"type">> => <<"integer">>, <<"description">> => <<"Number of operations to show (default: 10)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"begin_transaction">>,
+                <<"description">> => <<"Begin a transaction for grouping multiple file edits as a single undo unit. All edits until end_transaction will be undone/redone together.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"end_transaction">>,
+                <<"description">> => <<"End the current transaction and push it as a single undo unit. All grouped edits are now treated as one operation for undo/redo.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"cancel_transaction">>,
+                <<"description">> => <<"Cancel the current transaction without pushing it to the undo stack. Useful for error recovery.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
+        },
         % Project Detection
         #{
             <<"type">> => <<"function">>,
@@ -925,7 +1004,8 @@ execute(<<"grep_files">>, Args) ->
         [] -> #{<<"success">> => true, <<"matches">> => <<"No matches found">>};
         _ ->
             Trimmed = string:trim(Result, trailing, "\n"),
-            #{<<"success">> => true, <<"matches">> => unicode:characters_to_binary(Trimmed)}
+            Limited = limit_grep_output(unicode:characters_to_binary(Trimmed), 10000),
+            #{<<"success">> => true, <<"matches">> => Limited}
     end;
 
 execute(<<"find_files">>, #{<<"pattern">> := Pattern} = Args) ->
@@ -955,6 +1035,62 @@ execute(<<"undo_edit">>, #{<<"path">> := Path}) ->
 execute(<<"list_backups">>, _Args) ->
     Backups = list_backups_impl(),
     #{<<"success">> => true, <<"backups">> => Backups};
+
+% Undo/Redo Stack Operations
+execute(<<"undo">>, Args) ->
+    Count = maps:get(<<"count">>, Args, 1),
+    case coding_agent_undo:undo(Count) of
+        {ok, Results} ->
+            #{<<"success">> => true, <<"undone">> => length(Results), <<"results">> => format_undo_results(Results)};
+        {error, nothing_to_undo} ->
+            #{<<"success">> => false, <<"error">> => <<"Nothing to undo">>};
+        {error, partial_undo, Results} ->
+            #{<<"success">> => false, <<"error">> => <<"Partial undo">>, <<"results">> => format_undo_results(Results)}
+    end;
+
+execute(<<"redo">>, Args) ->
+    Count = maps:get(<<"count">>, Args, 1),
+    case coding_agent_undo:redo(Count) of
+        {ok, Results} ->
+            #{<<"success">> => true, <<"redone">> => length(Results), <<"results">> => format_undo_results(Results)};
+        {error, nothing_to_redo} ->
+            #{<<"success">> => false, <<"error">> => <<"Nothing to redo">>};
+        {error, partial_redo, Results} ->
+            #{<<"success">> => false, <<"error">> => <<"Partial redo">>, <<"results">> => format_undo_results(Results)}
+    end;
+
+execute(<<"undo_history">>, Args) ->
+    Count = maps:get(<<"count">>, Args, 10),
+    case coding_agent_undo:get_history(Count) of
+        History when is_list(History) ->
+            #{<<"success">> => true, <<"history">> => History, <<"count">> => length(History)};
+        _ ->
+            #{<<"success">> => false, <<"error">> => <<"Failed to get undo history">>}
+    end;
+
+execute(<<"begin_transaction">>, _Args) ->
+    case coding_agent_undo:begin_transaction() of
+        {ok, TxnId} ->
+            #{<<"success">> => true, <<"transaction_id">> => TxnId};
+        {error, transaction_in_progress} ->
+            #{<<"success">> => false, <<"error">> => <<"Transaction already in progress">>}
+    end;
+
+execute(<<"end_transaction">>, _Args) ->
+    case coding_agent_undo:end_transaction() of
+        {ok, OpId} ->
+            #{<<"success">> => true, <<"operation_id">> => OpId};
+        {error, no_transaction} ->
+            #{<<"success">> => false, <<"error">> => <<"No transaction in progress">>}
+    end;
+
+execute(<<"cancel_transaction">>, _Args) ->
+    case coding_agent_undo:cancel_transaction() of
+        ok ->
+            #{<<"success">> => true, <<"message">> => <<"Transaction cancelled">>};
+        {error, no_transaction} ->
+            #{<<"success">> => false, <<"error">> => <<"No transaction in progress">>}
+    end;
 
 % Project Detection
 execute(<<"detect_project">>, Args) ->
@@ -1365,8 +1501,23 @@ create_backup_internal(Path) ->
     case file:copy(Path, BackupPath) of
         {ok, _} ->
             cleanup_old_backups(),
+            % Push to undo stack if available
+            push_to_undo_stack(Path, BackupPath),
             {ok, BackupPath};
         {error, Reason} -> {error, file:format_error(Reason)}
+    end.
+
+push_to_undo_stack(Path, BackupPath) ->
+    case whereis(coding_agent_undo) of
+        undefined -> 
+            ok;  % Undo server not started, skip
+        _Pid ->
+            Op = #{
+                type => edit,
+                description => iolist_to_binary(io_lib:format("Edit ~s", [filename:basename(Path)])),
+                files => [{Path, BackupPath}]
+            },
+            coding_agent_undo:push(Op, #{})
     end.
 
 restore_backup_internal(Path) ->
@@ -2378,4 +2529,26 @@ collect_parallel_results(Pids, Results) ->
     after 120000 ->
         % Timeout - return what we have
         #{<<"error">> => <<"timeout">>}
+    end.
+
+% Helper for undo/redo results
+format_undo_results(Results) when is_list(Results) ->
+    lists:map(fun
+        ({ok, OpId}) -> #{<<"status">> => <<"ok">>, <<"operation_id">> => OpId};
+        ({error, Path, Reason}) -> #{<<"status">> => <<"error">>, <<"path">> => list_to_binary(Path), <<"reason">> => list_to_binary(io_lib:format("~p", [Reason]))};
+        ({error, Err}) -> #{<<"status">> => <<"error">>, <<"reason">> => list_to_binary(io_lib:format("~p", [Err]))}
+    end, Results);
+format_undo_results(_) ->
+    [].
+
+% Limit grep output to prevent context explosion
+limit_grep_output(Output, MaxLines) when is_binary(Output) ->
+    Lines = binary:split(Output, <<"\n">>, [global]),
+    case length(Lines) > MaxLines of
+        true ->
+            Limited = lists:sublist(Lines, MaxLines),
+            Omitted = length(Lines) - MaxLines,
+            iolist_to_binary([Limited, <<"\n... (">>, integer_to_binary(Omitted), <<" more lines omitted)">>]);
+        false ->
+            Output
     end.
