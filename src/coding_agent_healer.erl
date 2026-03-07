@@ -567,14 +567,21 @@ generate_fix_report_content(CrashId, Action, Result) ->
         <<"3. If crash persists, run /fix again or investigate manually\n">>
     ]).
 
-try_apply_fix(check_arguments, _CrashData) ->
-    {error, manual_fix_required};
-try_apply_fix(fix_pattern_match, _CrashData) ->
-    {error, manual_fix_required};
+try_apply_fix(check_arguments, CrashData) ->
+    % Try to add argument validation
+    fix_badarg(CrashData);
+try_apply_fix(fix_pattern_match, CrashData) ->
+    % Try to add catch-all pattern
+    fix_badmatch(CrashData);
 try_apply_fix(add_case_clause, CrashData) ->
     fix_case_clause(CrashData);
-try_apply_fix(fix_function_arity, _CrashData) ->
-    {error, manual_fix_required};
+try_apply_fix(add_if_clause, CrashData) ->
+    fix_if_clause(CrashData);
+try_apply_fix(add_try_clause, CrashData) ->
+    fix_try_clause(CrashData);
+try_apply_fix(fix_function_arity, CrashData) ->
+    % Try to add missing function clause
+    fix_function_clause(CrashData);
 try_apply_fix(export_or_define_function, CrashData) ->
     fix_missing_function(CrashData);
 try_apply_fix(check_process_start, _CrashData) ->
@@ -667,19 +674,306 @@ find_source_file(Module) ->
     end.
 
 find_case_clause_location(Content, _F, _A) ->
+    % Find the last clause before 'end' in a case statement
     Lines = binary:split(Content, <<"\n">>, [global]),
-    find_case_start(Lines, 1, none).
+    find_case_end(Lines, [], none, none).
 
-find_case_start([], _, none) -> {error, not_found};
-find_case_start([Line | Rest], LineNum, none) ->
-    case binary:match(Line, <<"case ">>) of
-        {_, _} ->
-            case find_case_end(Rest, LineNum + 1, 1) of
-                {ok, EndLine} -> {ok, LineNum, EndLine};
-                error -> find_case_start(Rest, LineNum + 1, none)
+find_case_end([], _Acc, none, none) ->
+    {error, not_found};
+find_case_end([], Acc, CaseStart, CaseEnd) when CaseStart =/= none, CaseEnd =/= none ->
+    {ok, CaseStart, CaseEnd};
+find_case_end([], _Acc, _CaseStart, _CaseEnd) ->
+    {error, not_found};
+find_case_end([Line | Rest], Acc, CaseStart, CaseEnd) ->
+    Trimmed = string:trim(Line),
+    case CaseStart of
+        none ->
+            case binary:match(Trimmed, <<"case ">>) of
+                {0, _} ->
+                    find_case_end(Rest, [Line | Acc], length(Acc), none);
+                _ ->
+                    find_case_end(Rest, [Line | Acc], none, none)
             end;
-        nomatch ->
-            find_case_start(Rest, LineNum + 1, none)
+        _ ->
+            case binary:match(Trimmed, <<"end">>) of
+                {0, _} ->
+                    find_case_end(Rest, [Line | Acc], CaseStart, length(Acc));
+                _ ->
+                    find_case_end(Rest, [Line | Acc], CaseStart, CaseEnd)
+            end
+    end.
+
+%% Fix badarg - add argument validation at function start
+fix_badarg(CrashData) ->
+    #{stacktrace := Stacktrace, reason := Reason} = CrashData,
+    case Stacktrace of
+        [{M, F, A, _Loc} | _] when A > 0 ->
+            SourceFile = find_source_file(M),
+            case file:read_file(SourceFile) of
+                {ok, Content} ->
+                    case find_function_clause(Content, F, A) of
+                        {ok, ClauseStart, ClauseEnd} ->
+                            % Add guard or validation
+                            ValidationCode = generate_arg_validation(Reason, A),
+                            NewContent = insert_validation(Content, ClauseStart, ClauseEnd, ValidationCode),
+                            file:write_file(SourceFile, NewContent),
+                            coding_agent_self:reload_module(M),
+                            {ok, #{file => SourceFile, action => added_argument_validation}};
+                        {error, not_found} ->
+                            {error, could_not_locate_function}
+                    end;
+                {error, _} ->
+                    {error, cannot_read_source}
+            end;
+        _ ->
+            {error, invalid_stacktrace}
+    end.
+
+%% Fix badmatch - add catch-all pattern
+fix_badmatch(CrashData) ->
+    #{stacktrace := Stacktrace} = CrashData,
+    case Stacktrace of
+        [{M, F, A, _Loc} | _] ->
+            SourceFile = find_source_file(M),
+            case file:read_file(SourceFile) of
+                {ok, Content} ->
+                    case find_function_clause(Content, F, A) of
+                        {ok, ClauseStart, ClauseEnd} ->
+                            % Add catch-all clause
+                            NewContent = add_wildcard_clause(Content, F, A, ClauseEnd),
+                            file:write_file(SourceFile, NewContent),
+                            coding_agent_self:reload_module(M),
+                            {ok, #{file => SourceFile, action => added_wildcard_clause}};
+                        {error, not_found} ->
+                            {error, could_not_locate_function}
+                    end;
+                {error, _} ->
+                    {error, cannot_read_source}
+            end;
+        _ ->
+            {error, invalid_stacktrace}
+    end.
+
+%% Fix if_clause - add true clause
+fix_if_clause(CrashData) ->
+    #{stacktrace := Stacktrace} = CrashData,
+    case Stacktrace of
+        [{M, _F, _A, _Loc} | _] ->
+            SourceFile = find_source_file(M),
+            case file:read_file(SourceFile) of
+                {ok, Content} ->
+                    NewContent = add_if_true_clause(Content),
+                    file:write_file(SourceFile, NewContent),
+                    coding_agent_self:reload_module(M),
+                    {ok, #{file => SourceFile, action => added_if_true_clause}};
+                {error, _} ->
+                    {error, cannot_read_source}
+            end;
+        _ ->
+            {error, invalid_stacktrace}
+    end.
+
+%% Fix try_clause - add catch clause
+fix_try_clause(CrashData) ->
+    #{stacktrace := Stacktrace} = CrashData,
+    case Stacktrace of
+        [{M, _F, _A, _Loc} | _] ->
+            SourceFile = find_source_file(M),
+            case file:read_file(SourceFile) of
+                {ok, Content} ->
+                    NewContent = add_try_catch_clause(Content),
+                    file:write_file(SourceFile, NewContent),
+                    coding_agent_self:reload_module(M),
+                    {ok, #{file => SourceFile, action => added_catch_clause}};
+                {error, _} ->
+                    {error, cannot_read_source}
+            end;
+        _ ->
+            {error, invalid_stacktrace}
+    end.
+
+%% Fix function_clause - add missing function clause
+fix_function_clause(CrashData) ->
+    #{stacktrace := Stacktrace} = CrashData,
+    case Stacktrace of
+        [{M, F, A, _Loc} | _] ->
+            SourceFile = find_source_file(M),
+            case file:read_file(SourceFile) of
+                {ok, Content} ->
+                    NewContent = add_function_clause(Content, F, A),
+                    file:write_file(SourceFile, NewContent),
+                    coding_agent_self:reload_module(M),
+                    {ok, #{file => SourceFile, action => added_function_clause}};
+                {error, _} ->
+                    {error, cannot_read_source}
+            end;
+        _ ->
+            {error, invalid_stacktrace}
+    end.
+
+%% Helper functions for fixes
+
+add_if_true_clause(Content) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    % Find 'if' statements and add 'true ->' clause before 'end'
+    NewLines = add_if_true_to_lines(Lines, []),
+    iolist_to_binary(string:join([binary_to_list(L) || L <- NewLines], "\n")).
+
+add_if_true_to_lines([], Acc) ->
+    lists:reverse(Acc);
+add_if_true_to_lines([Line | Rest], Acc) ->
+    Trimmed = string:trim(Line),
+    case binary:match(Trimmed, <<"end">>) of
+        {0, _} ->
+            % Check if previous lines are from an if statement
+            case find_if_start(Acc) of
+                true ->
+                    % Add 'true -> ok' before 'end'
+                    add_if_true_to_lines(Rest, [Line, <<"            true -> ok">> | Acc]);
+                false ->
+                    add_if_true_to_lines(Rest, [Line | Acc])
+            end;
+        _ ->
+            add_if_true_to_lines(Rest, [Line | Acc])
+    end.
+
+find_if_start([]) -> false;
+find_if_start([Line | Rest]) ->
+    Trimmed = string:trim(Line),
+    case binary:match(Trimmed, <<" if">>) of
+        {_, _} -> true;
+        _ -> find_if_start(Rest)
+    end.
+
+add_try_catch_clause(Content) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    % Find 'try' statements and add 'catch' clause
+    NewLines = add_catch_to_lines(Lines, []),
+    iolist_to_binary(string:join([binary_to_list(L) || L <- NewLines], "\n")).
+
+add_catch_to_lines([], Acc) ->
+    lists:reverse(Acc);
+add_catch_to_lines([Line | Rest], Acc) ->
+    Trimmed = string:trim(Line),
+    case binary:match(Trimmed, <<"end">>) of
+        {0, _} ->
+            % Check if this is a try block
+            case find_try_start(Acc) of
+                true ->
+                    % Add 'catch' clause before 'end'
+                    add_catch_to_lines(Rest, [Line, <<"        catch">>, <<"            _:_ -> ok">> | Acc]);
+                false ->
+                    add_catch_to_lines(Rest, [Line | Acc])
+            end;
+        _ ->
+            add_catch_to_lines(Rest, [Line | Acc])
+    end.
+
+find_try_start([]) -> false;
+find_try_start([Line | Rest]) ->
+    Trimmed = string:trim(Line),
+    case binary:match(Trimmed, <<"try">>) of
+        {0, _} -> true;
+        _ -> find_try_start(Rest)
+    end.
+
+generate_arg_validation(badarg, Arity) ->
+    % Get arg names from function spec or generate placeholder names
+    Args = [list_to_binary(["Arg", integer_to_list(N)]) || N <- lists:seq(1, Arity)],
+    Guards = [io_lib:format("is_binary(~s) orelse is_list(~s) orelse is_atom(~s)", [A, A, A]) || A <- Args],
+    io_lib:format("when ~s", [string:join(Guards, ",\n    ")]);
+generate_arg_validation(_Reason, _Arity) ->
+    "".
+
+insert_validation(Content, ClauseStart, _ClauseEnd, ValidationCode) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    {Before, After} = lists:split(ClauseStart + 1, Lines),
+    % Insert validation after the first line of the clause
+    NewLines = Before ++ [ValidationCode] ++ After,
+    iolist_to_binary(string:join([binary_to_list(L) || L <- NewLines], "\n")).
+
+add_wildcard_clause(Content, F, A, InsertPos) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    % Generate wildcard clause
+    Args = [<<"_", integer_to_binary(N)>> || N <- lists:seq(1, A)],
+    WildcardClause = io_lib:format("~s(~s) ->\n    erlang:error(not_implemented).", 
+        [F, string:join([binary_to_list(A) || A <- Args], ", ")]),
+    {Before, After} = lists:split(InsertPos + 1, Lines),
+    NewLines = Before ++ [iolist_to_binary(WildcardClause)] ++ After,
+    iolist_to_binary(string:join([binary_to_list(L) || L <- NewLines], "\n")).
+
+add_function_clause(Content, F, A) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    % Find the function definition
+    {FuncLines, RestLines} = find_function_lines(Lines, atom_to_binary(F, utf8), A),
+    % Add a catch-all clause
+    Args = [<<"_", integer_to_binary(N)>> || N <- lists:seq(1, A)],
+    CatchAll = iolist_to_binary(io_lib:format("~s(~s) ->\n    erlang:error(not_implemented).", 
+        [F, string:join([binary_to_list(A) || A <- Args], ", ")])),
+    % Insert before the next function or at the end
+    NewLines = FuncLines ++ [CatchAll] ++ RestLines,
+    iolist_to_binary(string:join([binary_to_list(L) || L <- NewLines], "\n")).
+
+find_function_lines(Lines, FName, Arity) ->
+    find_function_lines(Lines, FName, Arity, [], []).
+
+find_function_lines([], _FName, _Arity, FuncAcc, RestAcc) ->
+    {lists:reverse(FuncAcc), lists:reverse(RestAcc)};
+find_function_lines([Line | Rest], FName, Arity, FuncAcc, RestAcc) ->
+    case binary:match(Line, <<FName/binary, "(">>) of
+        {0, _} ->
+            % Found function start, collect until next function or end
+            collect_function_lines(Rest, [Line | FuncAcc], RestAcc, Arity);
+        _ ->
+            find_function_lines(Rest, FName, Arity, FuncAcc, [Line | RestAcc])
+    end.
+
+collect_function_lines([], FuncAcc, RestAcc, _Arity) ->
+    {lists:reverse(FuncAcc), lists:reverse(RestAcc)};
+collect_function_lines([Line | Rest], FuncAcc, RestAcc, Arity) ->
+    % Check for next function (starts with lowercase letter or -)
+    FirstChar = binary:first(string:trim(Line)),
+    case FirstChar of
+        $- -> {lists:reverse(FuncAcc), lists:reverse([Line | RestAcc])};
+        C when C >= $a, C =< $z ->
+            % Could be next function, stop collecting
+            {lists:reverse(FuncAcc), lists:reverse([Line | RestAcc])};
+        _ ->
+            collect_function_lines(Rest, [Line | FuncAcc], RestAcc, Arity)
+    end.
+
+find_function_clause(Content, F, Arity) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    find_function_clause(Lines, atom_to_binary(F, utf8), Arity, 0).
+
+find_function_clause([], _F, _Arity, _Line) ->
+    {error, not_found};
+find_function_clause([Line | Rest], F, Arity, LineNum) ->
+    case binary:match(Line, <<F/binary, "(">>) of
+        {0, _} ->
+            % Count arguments
+            case count_args(Line, Arity) of
+                true -> {ok, LineNum, LineNum + 1};
+                false -> find_function_clause(Rest, F, Arity, LineNum + 1)
+            end;
+        _ ->
+            find_function_clause(Rest, F, Arity, LineNum + 1)
+    end.
+
+count_args(Line, Arity) ->
+    case binary:match(Line, <<"(">>) of
+        {Start, _} ->
+            <<_:Start/binary, Rest/binary>> = Line,
+            case binary:match(Rest, <<")">>) of
+                {End, _} ->
+                    <<ArgsPart:End/binary, _/binary>> = Rest,
+                    CommaCount = length(binary:split(ArgsPart, <<",">>, [global])),
+                    CommaCount =:= Arity - 1;
+                none ->
+                    false
+            end;
+        none ->
+            false
     end.
 
 find_case_end([], _, _) -> error;
