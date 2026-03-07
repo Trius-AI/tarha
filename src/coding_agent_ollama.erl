@@ -3,6 +3,7 @@
 -export([count_tokens/1, count_tokens_accurate/2, truncate_messages/2]).
 -export([start_token_cache/0, clear_token_cache/0]).
 -export([get_model_info/1, get_model_context_length/1, get_model_context_length/2]).
+-export([show_model/2]).
 -export([list_models/0, switch_model/1, get_current_model/0]).
 
 -define(MAX_RETRIES, 20).
@@ -477,12 +478,23 @@ extract_context_length(Params) when is_map(Params) ->
         end
     end, undefined, Keys).
 
-get_model_info(Model) when is_binary(Model) ->
+get_model_info(Model) ->
+    show_model(Model, #{}).
+
+%% Show model details with options (supports verbose mode)
+show_model(Model, Opts) when is_binary(Model), is_map(Opts) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/show",
-    Body = jsx:encode(#{name => Model}),
+    %% Build request body - use 'model' parameter as per Ollama API spec
+    Body0 = #{model => Model},
+    %% Add verbose option if specified
+    Body = case maps:get(<<"verbose">>, Opts, undefined) of
+        true -> Body0#{verbose => true};
+        _ -> Body0
+    end,
+    EncodedBody = jsx:encode(Body),
     Headers = [{<<"Content-Type">>, <<"application/json">>}],
-    case hackney:post(Url, Headers, Body, [{recv_timeout, 10000}, with_body]) of
+    case hackney:post(Url, Headers, EncodedBody, [{recv_timeout, 10000}, with_body]) of
         {ok, 200, _RespHeaders, RespBody} ->
             try jsx:decode(RespBody, [return_maps]) of
                 Resp -> {ok, Resp}
@@ -494,8 +506,8 @@ get_model_info(Model) when is_binary(Model) ->
         {error, Reason} ->
             {error, Reason}
     end;
-get_model_info(Model) when is_list(Model) ->
-    get_model_info(list_to_binary(Model)).
+show_model(Model, Opts) when is_list(Model) ->
+    show_model(list_to_binary(Model), Opts).
 
 %% Model management functions
 

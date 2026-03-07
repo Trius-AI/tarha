@@ -20,6 +20,9 @@ start(_Args) ->
         io:format("║   /status        - Show session/memory status            ║~n"),
         io:format("║   /history       - Show conversation history               ║~n"),
         io:format("║   /tools         - List available tools                    ║~n"),
+        io:format("║   /models        - List available Ollama models           ║~n"),
+        io:format("║   /model <name>  - Show model details                     ║~n"),
+        io:format("║   /switch <name> - Switch to different model              ║~n"),
         io:format("║   /modules       - List agent modules                      ║~n"),
         io:format("║   /reload [mod]  - Hot reload module (all if no arg)      ║~n"),
         io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
@@ -156,6 +159,9 @@ process_command(SessionId, History, "help" ++ Rest) when Rest =:= []; hd(Rest) =
     io:format("  /status         - Show session & memory status~n"),
     io:format("  /history        - Show conversation history~n"),
     io:format("  /tools          - List available tools~n"),
+    io:format("  /models         - List available Ollama models~n"),
+    io:format("  /model <name>   - Show model details~n"),
+    io:format("  /switch <model> - Switch to a different model~n"),
     io:format("  /modules        - List agent modules~n"),
     io:format("  /reload [mod]  - Hot reload module (all if no arg)~n"),
     io:format("  /checkpoint     - Create checkpoint~n"),
@@ -247,6 +253,82 @@ process_command(SessionId, History, "tools" ++ Rest) when Rest =:= []; hd(Rest) 
         io:format("  - ~s~n", [Name])
     end, Tools),
     io:format("~n"),
+    {continue, History};
+
+process_command(_SessionId, History, "models" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
+    io:format("~nAvailable Ollama Models:~n"),
+    case coding_agent_ollama:list_models() of
+        {ok, Models} when is_list(Models) ->
+            CurrentModel = get_model(),
+            lists:foreach(fun(Model) ->
+                Name = maps:get(<<"name">>, Model, <<"unknown">>),
+                NameStr = binary_to_list(Name),
+                Size = maps:get(<<"size">>, Model, 0),
+                SizeMB = case is_integer(Size) of true -> Size div (1024 * 1024); false -> 0 end,
+                Marker = case lists:prefix(CurrentModel, NameStr) of true -> " *"; false -> "" end,
+                io:format("  ~s (~p MB)~s~n", [Name, SizeMB, Marker])
+            end, Models),
+            io:format("~n~p model(s) found.~n~n", [length(Models)]);
+        {error, Reason} ->
+            io:format("  Error listing models: ~p~n~n", [Reason])
+    end,
+    {continue, History};
+
+process_command(_SessionId, History, "model " ++ ModelName) ->
+    Name = safe_trim(ModelName),
+    io:format("~nModel Details for: ~s~n", [Name]),
+    case coding_agent_ollama:show_model(Name, #{}) of
+        {ok, ModelInfo} ->
+            Details = maps:get(<<"details">>, ModelInfo, #{}),
+            Family = maps:get(<<"family">>, Details, <<"unknown">>),
+            ParamSize = maps:get(<<"parameter_size">>, Details, <<"unknown">>),
+            QuantLevel = maps:get(<<"quantization_level">>, Details, <<"unknown">>),
+            Capabilities = maps:get(<<"capabilities">>, ModelInfo, []),
+            Parameters = maps:get(<<"parameters">>, ModelInfo, undefined),
+            License = maps:get(<<"license">>, ModelInfo, undefined),
+            Modified = maps:get(<<"modified_at">>, ModelInfo, undefined),
+            ModelInfoMap = maps:get(<<"model_info">>, ModelInfo, #{}),
+            
+            io:format("  Family: ~s~n", [Family]),
+            io:format("  Parameter Size: ~s~n", [ParamSize]),
+            io:format("  Quantization: ~s~n", [QuantLevel]),
+            io:format("  Modified: ~s~n", [Modified]),
+            case License of
+                undefined -> ok;
+                _ -> io:format("  License: ~s~n", [binary:part(License, 0, min(byte_size(License), 100))])
+            end,
+            case Capabilities of
+                [] -> ok;
+                _ -> io:format("  Capabilities: ~p~n", [Capabilities])
+            end,
+            case Parameters of
+                undefined -> ok;
+                _ -> 
+                    ParamStr = binary:part(Parameters, 0, min(byte_size(Parameters), 200)),
+                    io:format("  Parameters: ~s~n", [ParamStr])
+            end,
+            
+            % Try to extract context length
+            CtxLen = find_context_length(ModelInfoMap),
+            io:format("  Context Length: ~p~n", [CtxLen]),
+            
+            io:format("~n"),
+            {continue, History};
+        {error, Reason} ->
+            io:format("  Error getting model info: ~p~n~n", [Reason]),
+            {continue, History}
+    end;
+
+process_command(SessionId, History, "switch " ++ ModelName) ->
+    Name = safe_trim(ModelName),
+    io:format("Switching to model: ~s...~n", [Name]),
+    case coding_agent_ollama:switch_model(Name) of
+        {ok, OldModel, NewModel} ->
+            io:format("✓ Switched from ~s to ~s~n~n", [OldModel, NewModel]),
+            io:format("Session cleared (new model context).~n~n");
+        {error, Reason} ->
+            io:format("✗ Failed to switch model: ~p~n~n", [Reason])
+    end,
     {continue, History};
     
 process_command(SessionId, History, "modules" ++ Rest) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
@@ -881,6 +963,18 @@ format_crashes_text(Crashes) ->
         Module = maps:get(module, Data, unknown),
         io_lib:format("~s: ~p in ~p\n", [Id, Type, Module])
     end, Crashes).
+
+% Helper to extract context length from model_info
+find_context_length(ModelInfo) when is_map(ModelInfo) ->
+    Keys = [<<"context_length">>, <<"num_ctx">>, <<"n_ctx">>],
+    lists:foldl(fun(Key, Acc) ->
+        case Acc of
+            undefined -> maps:get(Key, ModelInfo, undefined);
+            _ -> Acc
+        end
+    end, undefined, Keys);
+find_context_length(_) ->
+    undefined.
 
 print_response(<<>>) ->
     ok;

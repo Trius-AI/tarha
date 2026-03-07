@@ -37,7 +37,8 @@ start_link(Options) ->
             {"/skills/:name", ?MODULE, #{action => skill_detail}},
             {"/tools", ?MODULE, #{action => tools}},
             {"/models", ?MODULE, #{action => models}},
-            {"/model", ?MODULE, #{action => model}}
+            {"/model", ?MODULE, #{action => model}},
+            {"/model/:name", ?MODULE, #{action => model_show}}
         ]}
     ]),
     
@@ -115,7 +116,8 @@ handle_action(<<"GET">>, index, _Req) ->
             #{method => <<"GET">>, path => <<"/skills/:name">>, description => <<"Get skill content">>},
             #{method => <<"GET">>, path => <<"/tools">>, description => <<"List available tools">>},
             #{method => <<"GET">>, path => <<"/models">>, description => <<"List available Ollama models">>},
-            #{method => <<"POST">>, path => <<"/model">>, description => <<"Switch current Ollama model">>}
+            #{method => <<"POST">>, path => <<"/model">>, description => <<"Switch current Ollama model">>},
+            #{method => <<"GET">>, path => <<"/model/:name">>, description => <<"Show model details">>}
         ]
     }};
 
@@ -290,6 +292,24 @@ handle_action(<<"POST">>, model, Req) ->
             end;
         false ->
             {error, 400, invalid_json}
+    end;
+
+handle_action(<<"GET">>, model_show, Req) ->
+    ModelName = cowboy_req:binding(name, Req),
+    case coding_agent_ollama:show_model(ModelName, #{}) of
+        {ok, ModelInfo} ->
+            {ok, #{
+                model => ModelName,
+                details => maps:get(<<"details">>, ModelInfo, #{}),
+                capabilities => maps:get(<<"capabilities">>, ModelInfo, []),
+                parameters => maps:get(<<"parameters">>, ModelInfo, undefined),
+                license => maps:get(<<"license">>, ModelInfo, undefined),
+                modified_at => maps:get(<<"modified_at">>, ModelInfo, undefined),
+                template => maps:get(<<"template">>, ModelInfo, undefined),
+                model_info => maps:get(<<"model_info">>, ModelInfo, #{})
+            }};
+        {error, Reason} ->
+            {error, 500, io_lib:format("~p", [Reason])}
     end;
 
 handle_action(_, _, _Req) ->

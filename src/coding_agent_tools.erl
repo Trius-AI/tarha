@@ -743,6 +743,21 @@ tools() ->
                 }
             }
         },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"show_model">>,
+                <<"description">> => <<"Show detailed information about an Ollama model including parameters, capabilities, architecture, context length, and more.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"model">> => #{<<"type">> => <<"string">>, <<"description">> => <<"The model name to show details for (e.g., 'llama3', 'gemma3')">>},
+                        <<"verbose">> => #{<<"type">> => <<"boolean">>, <<"description">> => <<"If true, includes large verbose fields in the response (default: false)">>}
+                    },
+                    <<"required">> => [<<"model">>]
+                }
+            }
+        },
         % Parallel Execution
         #{
             <<"type">> => <<"function">>,
@@ -1331,6 +1346,37 @@ execute(<<"switch_model">>, #{<<"model">> := Model}) ->
         {error, Reason} ->
             Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
             report_progress(<<"switch_model">>, <<"error">>, #{reason => Reason}),
+            Result
+    end;
+
+execute(<<"show_model">>, #{<<"model">> := Model} = Args) ->
+    Verbose = maps:get(<<"verbose">>, Args, false),
+    Opts = #{verbose => Verbose},
+    report_progress(<<"show_model">>, <<"starting">>, #{model => Model, verbose => Verbose}),
+    case coding_agent_ollama:show_model(Model, Opts) of
+        {ok, ModelInfo} ->
+            %% Extract key fields for easier consumption
+            Details = maps:get(<<"details">>, ModelInfo, #{}),
+            Capabilities = maps:get(<<"capabilities">>, ModelInfo, []),
+            Parameters = maps:get(<<"parameters">>, ModelInfo, undefined),
+            ModelInfoMap = maps:get(<<"model_info">>, ModelInfo, #{}),
+            
+            Result = #{
+                <<"success">> => true,
+                <<"model">> => Model,
+                <<"details">> => Details,
+                <<"capabilities">> => Capabilities,
+                <<"parameters">> => Parameters,
+                <<"model_info">> => ModelInfoMap,
+                <<"license">> => maps:get(<<"license">>, ModelInfo, undefined),
+                <<"modified_at">> => maps:get(<<"modified_at">>, ModelInfo, undefined),
+                <<"template">> => maps:get(<<"template">>, ModelInfo, undefined)
+            },
+            report_progress(<<"show_model">>, <<"complete">>, #{model => Model}),
+            Result;
+        {error, Reason} ->
+            Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
+            report_progress(<<"show_model">>, <<"error">>, #{reason => Reason}),
             Result
     end;
 
