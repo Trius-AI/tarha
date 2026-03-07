@@ -3,6 +3,7 @@
 -export([count_tokens/1, count_tokens_accurate/2, truncate_messages/2]).
 -export([start_token_cache/0, clear_token_cache/0]).
 -export([get_model_info/1, get_model_context_length/1, get_model_context_length/2]).
+-export([list_models/0, switch_model/1, get_current_model/0]).
 
 -define(MAX_RETRIES, 20).
 -define(RETRY_DELAY_BASE, 5000).  % 5 second base.
@@ -495,3 +496,52 @@ get_model_info(Model) when is_binary(Model) ->
     end;
 get_model_info(Model) when is_list(Model) ->
     get_model_info(list_to_binary(Model)).
+
+%% Model management functions
+
+%% List all available models from Ollama API
+list_models() ->
+    Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
+    Url = Host ++ "/api/tags",
+    Headers = [{<<"Content-Type">>, <<"application/json">>}],
+    case hackney:get(Url, Headers, <<>>, [{recv_timeout, 10000}, with_body]) of
+        {ok, 200, _RespHeaders, RespBody} ->
+            try jsx:decode(RespBody, [return_maps]) of
+                #{<<"models">> := Models} ->
+                    %% Extract relevant model info
+                    ModelList = lists:map(fun(#{<<"name">> := Name} = M) ->
+                        #{
+                            name => Name,
+                            size => maps:get(<<"size">>, M, undefined),
+                            digest => maps:get(<<"digest">>, M, undefined),
+                            modified_at => maps:get(<<"modified_at">>, M, undefined),
+                            details => maps:get(<<"details">>, M, undefined)
+                        }
+                    end, Models),
+                    {ok, ModelList};
+                Resp ->
+                    {error, {unexpected_response, Resp}}
+            catch
+                _:_ -> {error, parse_error}
+            end;
+        {ok, StatusCode, _RespHeaders, RespBody} ->
+            {error, {http_error, StatusCode, RespBody}};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+%% Switch the current model by updating application environment
+switch_model(Model) when is_binary(Model) ->
+    OldModel = get_current_model(),
+    application:set_env(coding_agent, ollama_model, binary_to_list(Model)),
+    {ok, OldModel, binary_to_list(Model)};
+switch_model(Model) when is_list(Model) ->
+    switch_model(list_to_binary(Model)).
+
+%% Get the current model from application environment
+get_current_model() ->
+    case application:get_env(coding_agent, ollama_model) of
+        {ok, Model} when is_list(Model) -> list_to_binary(Model);
+        {ok, Model} when is_binary(Model) -> Model;
+        undefined -> <<"glm-5:cloud">>
+    end.

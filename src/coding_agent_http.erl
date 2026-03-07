@@ -35,7 +35,9 @@ start_link(Options) ->
             {"/memory/consolidate", ?MODULE, #{action => memory_consolidate}},
             {"/skills", ?MODULE, #{action => skills}},
             {"/skills/:name", ?MODULE, #{action => skill_detail}},
-            {"/tools", ?MODULE, #{action => tools}}
+            {"/tools", ?MODULE, #{action => tools}},
+            {"/models", ?MODULE, #{action => models}},
+            {"/model", ?MODULE, #{action => model}}
         ]}
     ]),
     
@@ -111,7 +113,9 @@ handle_action(<<"GET">>, index, _Req) ->
             #{method => <<"POST">>, path => <<"/memory/consolidate">>, description => <<"Trigger memory consolidation">>},
             #{method => <<"GET">>, path => <<"/skills">>, description => <<"List available skills">>},
             #{method => <<"GET">>, path => <<"/skills/:name">>, description => <<"Get skill content">>},
-            #{method => <<"GET">>, path => <<"/tools">>, description => <<"List available tools">>}
+            #{method => <<"GET">>, path => <<"/tools">>, description => <<"List available tools">>},
+            #{method => <<"GET">>, path => <<"/models">>, description => <<"List available Ollama models">>},
+            #{method => <<"POST">>, path => <<"/model">>, description => <<"Switch current Ollama model">>}
         ]
     }};
 
@@ -260,6 +264,32 @@ handle_action(<<"GET">>, skill_detail, Req) ->
                 {ok, Content} -> {ok, #{name => SkillName, content => Content}};
                 _ -> {error, 500, skill_load_error}
             end
+    end;
+
+handle_action(<<"GET">>, models, _Req) ->
+    case coding_agent_ollama:list_models() of
+        {ok, Models} -> {ok, #{models => Models, count => length(Models)}};
+        {error, Reason} -> {error, 500, io_lib:format("~p", [Reason])}
+    end;
+
+handle_action(<<"POST">>, model, Req) ->
+    {ok, Body, _} = cowboy_req:read_body(Req),
+    case jsx:is_json(Body) of
+        true ->
+            Data = jsx:decode(Body, [return_maps]),
+            Model = maps:get(<<"model">>, Data, undefined),
+            case Model of
+                undefined -> {error, 400, missing_model};
+                _ ->
+                    case coding_agent_ollama:switch_model(Model) of
+                        {ok, OldModel, NewModel} -> 
+                            {ok, #{status => switched, old_model => OldModel, new_model => NewModel}};
+                        {error, Reason} -> 
+                            {error, 500, io_lib:format("~p", [Reason])}
+                    end
+            end;
+        false ->
+            {error, 400, invalid_json}
     end;
 
 handle_action(_, _, _Req) ->

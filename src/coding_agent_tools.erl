@@ -716,6 +716,33 @@ tools() ->
                 }
             }
         },
+        % Model Management
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"list_models">>,
+                <<"description">> => <<"List all available Ollama models. Returns model names, sizes, and details.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{},
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"switch_model">>,
+                <<"description">> => <<"Switch the current Ollama model. Updates the model configuration for subsequent requests.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"model">> => #{<<"type">> => <<"string">>, <<"description">> => <<"The model name to switch to (e.g., 'llama3', 'qwen2.5', 'glm-5:cloud')">>}
+                    },
+                    <<"required">> => [<<"model">>]
+                }
+            }
+        },
         % Parallel Execution
         #{
             <<"type">> => <<"function">>,
@@ -1249,6 +1276,34 @@ execute(<<"list_checkpoints">>, _Args) ->
 execute(<<"hello">>, _Args) ->
     io:format("hello world~n"),
     #{<<"success">> => true, <<"message">> => <<"hello world">>};
+
+% Model Management
+execute(<<"list_models">>, _Args) ->
+    report_progress(<<"list_models">>, <<"starting">>, #{}),
+    case coding_agent_ollama:list_models() of
+        {ok, Models} ->
+            Result = #{<<"success">> => true, <<"models">> => Models, <<"count">> => length(Models)},
+            report_progress(<<"list_models">>, <<"complete">>, #{count => length(Models)}),
+            Result;
+        {error, Reason} ->
+            Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
+            report_progress(<<"list_models">>, <<"error">>, #{reason => Reason}),
+            Result
+    end;
+
+execute(<<"switch_model">>, #{<<"model">> := Model}) ->
+    report_progress(<<"switch_model">>, <<"starting">>, #{model => Model}),
+    case coding_agent_ollama:switch_model(Model) of
+        {ok, OldModel, NewModel} ->
+            Result = #{<<"success">> => true, <<"old_model">> => OldModel, <<"new_model">> => NewModel},
+            log_operation(<<"switch_model">>, Model, Result),
+            report_progress(<<"switch_model">>, <<"complete">>, #{old => OldModel, new => NewModel}),
+            Result;
+        {error, Reason} ->
+            Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
+            report_progress(<<"switch_model">>, <<"error">>, #{reason => Reason}),
+            Result
+    end;
 
 % HTTP Client
 execute(<<"http_request">>, Args) ->
