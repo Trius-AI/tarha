@@ -768,6 +768,35 @@ tools() ->
                     <<"required">> => [<<"calls">>]
                 }
             }
+        },
+        % Skills
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"list_skills">>,
+                <<"description">> => <<"List available skills. Skills are markdown files that provide specialized knowledge and instructions.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"available_only">> => #{<<"type">> => <<"boolean">>, <<"description">> => <<"Only show skills whose requirements are met (default: false)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"load_skill">>,
+                <<"description">> => <<"Load and read a skill's content by name. Returns the full SKILL.md content.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"name">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Skill name (directory name in priv/skills/ or skills/)">>}
+                    },
+                    <<"required">> => [<<"name">>]
+                }
+            }
         }
     ].
 
@@ -1319,6 +1348,42 @@ execute(<<"http_request">>, Args) ->
 % Parallel Execution
 execute(<<"execute_parallel">>, #{<<"calls">> := Calls}) ->
     execute_parallel_impl(Calls);
+
+% Skills
+execute(<<"list_skills">>, Args) ->
+    AvailableOnly = maps:get(<<"available_only">>, Args, false),
+    report_progress(<<"list_skills">>, <<"starting">>, #{}),
+    case coding_agent_skills:list_skills(AvailableOnly) of
+        {ok, Skills} ->
+            Result = #{
+                <<"success">> => true,
+                <<"skills">> => Skills,
+                <<"count">> => length(Skills)
+            },
+            report_progress(<<"list_skills">>, <<"complete">>, #{count => length(Skills)}),
+            Result;
+        {error, Reason} ->
+            Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
+            report_progress(<<"list_skills">>, <<"error">>, #{reason => Reason}),
+            Result
+    end;
+
+execute(<<"load_skill">>, #{<<"name">> := Name}) ->
+    report_progress(<<"load_skill">>, <<"starting">>, #{name => Name}),
+    case coding_agent_skills:load_skill(Name) of
+        {ok, Content} ->
+            Result = #{
+                <<"success">> => true,
+                <<"name">> => Name,
+                <<"content">> => safe_binary(Content)
+            },
+            report_progress(<<"load_skill">>, <<"complete">>, #{name => Name}),
+            Result;
+        {error, Reason} ->
+            Result = #{<<"success">> => false, <<"error">> => safe_binary(Reason)},
+            report_progress(<<"load_skill">>, <<"error">>, #{reason => Reason}),
+            Result
+    end;
 
 execute(_Tool, _Args) ->
     #{<<"success">> => false, <<"error">> => <<"Unknown tool">>}.
