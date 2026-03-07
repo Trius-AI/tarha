@@ -39,9 +39,9 @@ start(_Args) ->
         loop(SessionId, History),
         ok
     catch
-        Type:Error:Stack ->
-            io:format("~n❌ Failed to start REPL: ~p:~p~n", [Type, Error]),
-            io:format("Stack: ~p~n", [Stack]),
+        Type:Error:Stacktrace ->
+            io:format("~nError starting REPL: ~p:~p~n", [Type, Error]),
+            io:format("Stack: ~p~n", [Stacktrace]),
             init:stop(1),
             ok
     end.
@@ -63,7 +63,7 @@ flush_pending_output() ->
 loop(SessionId, History) ->
     io:format("coder> ", []),
     flush_pending_output(),
-    try file:read_line(standard_io) of
+    case file:read_line(standard_io) of
         eof ->
             io:format("~nGoodbye!~n"),
             save_history(History),
