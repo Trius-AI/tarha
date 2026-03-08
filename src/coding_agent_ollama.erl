@@ -620,11 +620,12 @@ do_chat_with_tools_cancellable(SessionId, Model, Messages, Tools) ->
     Url = Host ++ "/api/chat",
     
     SupportsThinking = model_supports_thinking(Model),
+    SupportsTools = model_supports_tools(Model),
     
     Body = jsx:encode(#{
         model => Model,
         messages => Messages,
-        tools => Tools,
+        tools => case SupportsTools of true -> Tools; false -> [] end,
         think => SupportsThinking,
         stream => false
     }),
