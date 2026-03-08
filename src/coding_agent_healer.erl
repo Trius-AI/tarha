@@ -631,30 +631,7 @@ rollback_modules([M | Rest]) ->
             {ok, #{rolled_back => M}};
         _ ->
             rollback_modules(Rest)
-    end.
-
-fix_case_clause(CrashData) ->
-    #{stacktrace := Stacktrace} = CrashData,
-    case Stacktrace of
-        [{M, F, A, _Loc} | _] ->
-            SourceFile = find_source_file(M),
-            case file:read_file(SourceFile) of
-                {ok, Content} ->
-                    case find_case_clause_location(Content, F, A) of
-                        {ok, CaseStart, CaseEnd} ->
-                            NewContent = add_catch_all_case(Content, CaseStart, CaseEnd),
-                            file:write_file(SourceFile, NewContent),
-                            coding_agent_self:reload_module(M),
-                            {ok, #{file => SourceFile, action => added_catch_all}};
-                        {error, not_found} ->
-                            {error, could_not_locate_case}
-                    end;
-                {error, _} ->
-                    {error, cannot_read_source}
-            end;
-        _ ->
-            {error, invalid_stacktrace}
-    end.
+     end.
 
 fix_missing_function(CrashData) ->
     #{analysis := Analysis} = CrashData,
