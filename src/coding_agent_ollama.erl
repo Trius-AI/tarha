@@ -459,21 +459,35 @@ truncate_messages([Msg | Rest], MaxTokens, Acc) ->
 
 %% Model info functions - get context length from Ollama API
 
+<<<<<<< HEAD
 -define(DEFAULT_CONTEXT_LENGTH, 32768).
+=======
+-define(DEFAULT_CONTEXT_LENGTH, 8192).
+>>>>>>> 8aa6c7f057aad1e86beb25e3b84225dc95d5d9e7
 
 get_model_context_length(Model) ->
     get_model_context_length(Model, ?DEFAULT_CONTEXT_LENGTH).
 
 get_model_context_length(Model, Default) when is_binary(Model) ->
     case get_model_info(Model) of
+<<<<<<< HEAD
         {ok, ModelInfo} when is_map(ModelInfo) ->
             extract_context_length_from_model_info(ModelInfo, Default);
+=======
+        {ok, #{<<"parameters">> := Params}} when is_map(Params) ->
+            case extract_context_length(Params) of
+                undefined -> Default;
+                Len when is_integer(Len), Len > 0 -> Len;
+                _ -> Default
+            end;
+>>>>>>> 8aa6c7f057aad1e86beb25e3b84225dc95d5d9e7
         _ ->
             Default
     end;
 get_model_context_length(Model, Default) when is_list(Model) ->
     get_model_context_length(list_to_binary(Model), Default).
 
+<<<<<<< HEAD
 extract_context_length_from_model_info(ModelInfo, Default) ->
     Keys = [<<"context_length">>, <<"num_ctx">>, <<"n_ctx">>],
     
@@ -537,6 +551,23 @@ show_model(Model, Opts) when is_binary(Model), is_map(Opts) ->
     EncodedBody = jsx:encode(Body),
     Headers = [{<<"Content-Type">>, <<"application/json">>}],
     case hackney:post(Url, Headers, EncodedBody, [{recv_timeout, 10000}, with_body]) of
+=======
+extract_context_length(Params) when is_map(Params) ->
+    Keys = [<<"context_length">>, <<"num_ctx">>, <<"n_ctx">>],
+    lists:foldl(fun(Key, Acc) ->
+        case Acc of
+            undefined -> maps:get(Key, Params, undefined);
+            _ -> Acc
+        end
+    end, undefined, Keys).
+
+get_model_info(Model) when is_binary(Model) ->
+    Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
+    Url = Host ++ "/api/show",
+    Body = jsx:encode(#{name => Model}),
+    Headers = [{<<"Content-Type">>, <<"application/json">>}],
+    case hackney:post(Url, Headers, Body, [{recv_timeout, 10000}, with_body]) of
+>>>>>>> 8aa6c7f057aad1e86beb25e3b84225dc95d5d9e7
         {ok, 200, _RespHeaders, RespBody} ->
             try jsx:decode(RespBody, [return_maps]) of
                 Resp -> {ok, Resp}
@@ -548,6 +579,7 @@ show_model(Model, Opts) when is_binary(Model), is_map(Opts) ->
         {error, Reason} ->
             {error, Reason}
     end;
+<<<<<<< HEAD
 show_model(Model, Opts) when is_list(Model) ->
     show_model(list_to_binary(Model), Opts).
 
@@ -753,3 +785,7 @@ get_model_capabilities(Model) when is_binary(Model) ->
         {error, Reason} ->
             {error, Reason}
     end.
+=======
+get_model_info(Model) when is_list(Model) ->
+    get_model_info(list_to_binary(Model)).
+>>>>>>> 8aa6c7f057aad1e86beb25e3b84225dc95d5d9e7
