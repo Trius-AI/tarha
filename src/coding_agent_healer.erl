@@ -1004,12 +1004,20 @@ is_valid_func_start(Before) ->
 count_args(Line, Arity) ->
     case binary:match(Line, <<"(">>) of
         {Start, _} ->
+            % Get everything after the opening paren
             <<_:Start/binary, Rest/binary>> = Line,
             case binary:match(Rest, <<")">>) of
                 {End, _} ->
+                    % Get the part between ( and )
                     <<ArgsPart:End/binary, _/binary>> = Rest,
-                    CommaCount = length(binary:split(ArgsPart, <<",">>, [global])),
-                    CommaCount =:= Arity - 1;
+                    % Count commas + 1 = number of args
+                    % For zero args: no commas, split returns 1 element (empty)
+                    % For 1 arg: no commas, split returns 1 element  
+                    % For n args: n-1 commas, split returns n elements
+                    Parts = binary:split(ArgsPart, <<",">>, [global]),
+                    % Filter out empty parts (handles whitespace)
+                    NonEmptyParts = [P || P <- Parts, byte_size(P) > 0, P =/= <<$\s>>, P =/= <<$\t>>],
+                    length(NonEmptyParts) =:= Arity;
                 none ->
                     false
             end;
