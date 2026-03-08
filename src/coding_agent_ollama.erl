@@ -153,11 +153,15 @@ do_chat_with_tools(Model, Messages, Tools) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
+    % Check if model supports thinking and tools
+    SupportsThinking = model_supports_thinking(Model),
+    SupportsTools = model_supports_tools(Model),
+    
     Body = jsx:encode(#{
         model => Model,
         messages => Messages,
-        tools => Tools,
-        think => true,
+        tools => case SupportsTools of true -> Tools; false -> [] end,
+        think => SupportsThinking,
         stream => false
     }),
     
@@ -217,11 +221,14 @@ do_chat_stream(Model, Messages, Tools, Callback) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
+    SupportsThinking = model_supports_thinking(Model),
+    SupportsTools = model_supports_tools(Model),
+    
     Body = jsx:encode(#{
         model => Model,
         messages => Messages,
-        tools => Tools,
-        think => true,
+        tools => case SupportsTools of true -> Tools; false -> [] end,
+        think => SupportsThinking,
         stream => true
     }),
     
@@ -612,11 +619,13 @@ do_chat_with_tools_cancellable(SessionId, Model, Messages, Tools) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
+    SupportsThinking = model_supports_thinking(Model),
+    
     Body = jsx:encode(#{
         model => Model,
         messages => Messages,
         tools => Tools,
-        think => true,
+        think => SupportsThinking,
         stream => false
     }),
     
@@ -688,11 +697,13 @@ chat_stream_cancellable(SessionId, Model, Messages, Tools, Callback) when is_bin
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
     Url = Host ++ "/api/chat",
     
+    SupportsThinking = model_supports_thinking(Model),
+    
     Body = jsx:encode(#{
         model => Model,
         messages => Messages,
         tools => Tools,
-        think => true,
+        think => SupportsThinking,
         stream => true
     }),
     
@@ -765,3 +776,25 @@ collect_chat_stream_cancellable(SessionId, Callback, ResponseAcc, ThinkingAcc, C
     after 300000 ->
         {error, timeout}
     end.
+
+%% @doc Check if model supports thinking mode
+%% Cloud models and some local models support extended thinking
+model_supports_thinking(Model) when is_binary(Model) ->
+    ModelStr = binary_to_list(Model),
+    % Cloud models typically support thinking
+    CloudPatterns = [<<"cloud">>, <<"glm-5">>, <<"glm-4.7">>, <<"qwen3.5">>, <<"qwen3">>, <<"deepseek">>],
+    lists:any(fun(Pattern) -> binary:match(Model, Pattern) =/= nomatch end, CloudPatterns);
+model_supports_thinking(Model) when is_list(Model) ->
+    model_supports_thinking(list_to_binary(Model));
+model_supports_thinking(_) ->
+    false.
+
+%% @doc Check if model supports tool calling
+%% Cloud models and some local models support tools
+model_supports_tools(Model) when is_binary(Model) ->
+    CloudPatterns = [<<"cloud">>, <<"glm-5">>, <<"glm-4.7">>, <<"qwen3.5">>, <<"qwen3">>, <<"deepseek">>, <<"gpt">>],
+    lists:any(fun(Pattern) -> binary:match(Model, Pattern) =/= nomatch end, CloudPatterns);
+model_supports_tools(Model) when is_list(Model) ->
+    model_supports_tools(list_to_binary(Model));
+model_supports_tools(_) ->
+    false.
