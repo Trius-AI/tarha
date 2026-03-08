@@ -389,7 +389,7 @@ handle_call({ask, Message, _Opts}, _From, State = #state{model = Model, messages
     
     case run_agent_loop(Model, Messages, 0, OpenFiles, Id) of
         {ok, Response, Thinking, NewHistory, FinalOpenFiles, TokenInfo} ->
-            FinalHistory = trim_history(NewHistory, ?MAX_HISTORY),
+            FinalHistory = trim_history(NewHistory),
             ReplyHistory = [{maps:get(<<"role">>, M), maps:get(<<"content">>, M, <<"">>)} || M <- lists:sublist(FinalHistory, 2, length(FinalHistory))],
             
             %% Extract token counts
