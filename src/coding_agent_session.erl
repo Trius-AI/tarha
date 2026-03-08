@@ -30,8 +30,10 @@
 -define(MAX_HISTORY_SIZE, 100000).  % 100KB max history in bytes
 -define(MAX_TOOL_RESULT_SIZE, 10000).  % 10KB max per tool result (was 20KB)
 -define(DEFAULT_CONTEXT_LENGTH, 32768).  % Default if model info unavailable
--define(CONTEXT_USAGE_THRESHOLD, 0.75).  % Compact at 75% context usage
+-define(CONTEXT_USAGE_THRESHOLD, 0.85).  % Compact at 85% context usage
 -define(COMPACTION_THRESHOLD, 150000).  % ~50KB tokens
+-define(KEEP_RECENT_MESSAGES, 10).       % Messages to keep intact during compaction
+-define(SUMMARIZE_TIMEOUT, 30000).       % 30s timeout for summarization LLM call
 -define(ARCHIVE_DIR, ".tarha/sessions").
 -define(CRASH_DIR, ".tarha/reports").
 -define(MAX_TOOL_RETRIES, 3).
@@ -970,34 +972,84 @@ maybe_compact_session(State = #state{prompt_tokens = PT, completion_tokens = CT,
             State
     end.
 
-compact_session(State = #state{id = Id, messages = Messages, model = Model, prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET, context_length = ContextLength}) ->
+compact_session(State = #state{id = Id, messages = Messages, model = Model, 
+                                 prompt_tokens = PT, completion_tokens = CT, 
+                                 estimated_tokens = ET, context_length = ContextLength}) ->
     TotalTokens = PT + CT + ET,
     io:format("[session] Compacting session ~s (~p/~p tokens, ~p%)~n", 
-              [Id, TotalTokens, ContextLength, round((TotalTokens / ContextLength) * 100)]),
+              [Id, TotalTokens, ContextLength, round((TotalTokens / max(ContextLength, 1)) * 100)]),
     
-    % Archive old session
     ArchiveId = archive_session(State),
     
-    % Summarize the conversation
-    Summary = summarize_messages(Messages, Model),
+    Result = case split_messages(Messages, ?KEEP_RECENT_MESSAGES) of
+        {[], _RecentMsgs} ->
+            io:format("[session] All messages are recent, using sliding window~n"),
+            KeepCount = max(5, round(length(Messages) * 0.5)),
+            {ok, lists:sublist(Messages, KeepCount)};
+        {OldMsgs, RecentMsgs} ->
+            io:format("[session] Summarizing ~p old messages, keeping ~p recent~n", 
+                      [length(OldMsgs), length(RecentMsgs)]),
+            case summarize_messages_with_timeout(OldMsgs, Model, ?SUMMARIZE_TIMEOUT) of
+                {ok, SummaryText} ->
+                    SummaryMsg = #{
+                        <<"role">> => <<"system">>,
+                        <<"content">> => <<"Previous conversation summary:\n\n", SummaryText/binary>>
+                    },
+                    io:format("[session] Session compacted. Archived as ~s~n", [ArchiveId]),
+                    {ok, [SummaryMsg | RecentMsgs]};
+                {error, timeout} ->
+                    io:format("[session] Summarization timed out, using sliding window~n"),
+                    KeepCount = length(RecentMsgs) + min(5, length(OldMsgs)),
+                    {ok, lists:sublist(Messages, KeepCount)};
+                {error, Reason} ->
+                    io:format("[session] Summarization failed: ~p, using sliding window~n", [Reason]),
+                    KeepCount = length(RecentMsgs) + min(5, length(OldMsgs)),
+                    {ok, lists:sublist(Messages, KeepCount)}
+            end
+    end,
     
-    case Summary of
-        {ok, SummaryText} ->
-            % Create new session with summary as context
-            SummaryMsg = #{
-                <<"role">> => <<"system">>,
-                <<"content">> => <<"This is a summary of the previous conversation:\n\n", SummaryText/binary>>
-            },
-            io:format("[session] Session compacted. Archived as ~s~n", [ArchiveId]),
+    case Result of
+        {ok, NewMessages} ->
+            NewTokenEst = lists:foldl(fun(M, Acc) ->
+                Content = maps:get(<<"content">>, M, <<>>),
+                byte_size(Content) div 4 + Acc
+            end, 0, NewMessages),
             State#state{
-                messages = [SummaryMsg],
+                messages = NewMessages,
                 prompt_tokens = 0,
                 completion_tokens = 0,
-                estimated_tokens = byte_size(SummaryText) div 4  % Rough estimate
+                estimated_tokens = NewTokenEst
             };
         {error, _} ->
             io:format("[session] Compaction failed, keeping full context~n"),
             State
+    end.
+
+%% Split messages into old (to summarize) and recent (to keep intact)
+split_messages(Messages, KeepCount) ->
+    Total = length(Messages),
+    case Total =< KeepCount of
+        true -> {[], Messages};
+        false ->
+            OldCount = Total - KeepCount,
+            OldMsgs = lists:sublist(Messages, OldCount),
+            RecentMsgs = lists:nthtail(OldCount, Messages),
+            {OldMsgs, RecentMsgs}
+    end.
+
+%% Summarize messages with timeout - falls back on failure
+summarize_messages_with_timeout(Messages, Model, TimeoutMs) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Pid = spawn(fun() ->
+        Result = summarize_messages(Messages, Model),
+        Parent ! {Ref, Result}
+    end),
+    receive
+        {Ref, Result} -> Result
+    after TimeoutMs ->
+        exit(Pid, kill),
+        {error, timeout}
     end.
 
 archive_session(#state{id = Id, model = Model, context_length = ContextLength, messages = Messages, working_dir = WD, open_files = OpenFiles, prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET, tool_calls = Calls}) ->
