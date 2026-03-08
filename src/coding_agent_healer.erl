@@ -729,31 +729,149 @@ find_case_end([Line | Rest], Acc, CaseStart, CaseEnd) ->
             end
     end.
 
-%% Fix badarg - add argument validation at function start
+%% Fix badarg - read the crash line and fix the pattern directly
 fix_badarg(CrashData) ->
-    #{stacktrace := Stacktrace, reason := Reason} = CrashData,
-    case Stacktrace of
-        [{M, F, A, _Loc} | _] when A > 0 ->
-            SourceFile = find_source_file(M),
-            case file:read_file(SourceFile) of
+    #{stacktrace := Stacktrace} = CrashData,
+    % Find the first stack frame with line info in our code
+    case find_user_code_location(Stacktrace) of
+        {ok, File, Line} ->
+            case file:read_file(File) of
                 {ok, Content} ->
-                    case find_function_clause(Content, F, A) of
-                        {ok, ClauseStart, ClauseEnd} ->
-                            % Add guard or validation
-                            ValidationCode = generate_arg_validation(Reason, A),
-                            NewContent = insert_validation(Content, ClauseStart, ClauseEnd, ValidationCode),
-                            file:write_file(SourceFile, NewContent),
-                            coding_agent_self:reload_module(M),
-                            {ok, #{file => SourceFile, action => added_argument_validation}};
-                        {error, not_found} ->
-                            {error, could_not_locate_function}
+                    Lines = binary:split(Content, <<"\n">>, [global]),
+                    case lists:nth(Line, Lines) of
+                        LineContent when is_binary(LineContent) ->
+                            case fix_badarg_in_line(File, Line, LineContent, Lines) of
+                                {ok, FixedContent} ->
+                                    file:write_file(File, FixedContent),
+                                    Module = filename_to_module(File),
+                                    coding_agent_self:reload_module(Module),
+                                    {ok, #{file => File, line => Line, action => fixed_badarg}};
+                                {error, Reason} ->
+                                    {error, Reason}
+                            end;
+                        _ ->
+                            {error, cannot_extract_line}
                     end;
                 {error, _} ->
                     {error, cannot_read_source}
             end;
-        _ ->
-            {error, invalid_stacktrace}
+        {error, Reason} ->
+            {error, Reason}
     end.
+
+find_user_code_location([]) ->
+    {error, no_user_code_in_stacktrace};
+find_user_code_location([{M, _F, _A, Info} | Rest]) ->
+    File = proplists:get_value(file, Info, ""),
+    Line = proplists:get_value(line, Info, 0),
+    case is_user_code(File) of
+        true when Line > 0 ->
+            {ok, File, Line};
+        _ ->
+            find_user_code_location(Rest)
+    end;
+find_user_code_location([_ | Rest]) ->
+    find_user_code_location(Rest).
+
+is_user_code(File) ->
+    % Check if file is in src/ directory (user code, not library)
+    binary:match(iolist_to_binary(File), <<"src/">>) =/= nomatch orelse
+    File =:= "coding_agent_repl.erl".
+
+filename_to_module(File) ->
+    BaseName = filename:basename(File, ".erl"),
+    list_to_atom(BaseName).
+
+fix_badarg_in_line(File, LineNum, LineContent, AllLines) ->
+    % Common badarg patterns:
+    % 1. io_lib:format("~s", [[Integer]]) - Unicode codepoint passed to ~s
+    % 2. binary_to_list(Incomplete) - incomplete binary
+    % 3. list_to_binary(Invalid) - invalid list
+    
+    case find_badarg_pattern(LineContent) of
+        {ok, {Pattern, Replacement}} ->
+            FixedLine = binary:replace(LineContent, Pattern, Replacement),
+            {Before, After} = lists:split(LineNum - 1, AllLines),
+            {ok, iolist_to_binary(lists:join(<<"\n">>, Before ++ [FixedLine] ++ After))};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+find_badarg_pattern(Line) ->
+    % Pattern: io_lib:format with unicode integer list
+    case binary:match(Line, <<"io_lib:format">>) of
+        {Pos, _} ->
+            % Check for ~s with integer list argument
+            case extract_format_args(Line) of
+                {ok, FormatStr, Args} ->
+                    case analyze_format_badarg(FormatStr, Args) of
+                        {ok, Replacement} ->
+                            {ok, {Line, Replacement}};
+                        {error, _} ->
+                            % Try other patterns
+                            try_other_badarg_patterns(Line)
+                    end;
+                _ ->
+                    try_other_badarg_patterns(Line)
+            end;
+        _ ->
+            try_other_badarg_patterns(Line)
+    end.
+
+try_other_badarg_patterns(Line) ->
+    % Add more patterns here as we discover them
+    {error, unknown_badarg_pattern}.
+
+analyze_format_badarg(FormatStr, Args) ->
+    % Check if we're passing integer list to ~s
+    case binary:match(FormatStr, <<"~s">>) of
+        {_, _} ->
+            % ~s used, check args for integer list pattern
+            case Args of
+                [[Int | _]] when is_integer(Int) ->
+                    % Integer list like [10003] - need to use ~p or convert
+                    % Replace ~s with ~p for safety
+                    NewFormat = binary:replace(FormatStr, <<"~s">>, <<"~p">>),
+                    {ok, iolist_to_binary([<<"io_lib:format">>, <<"(">>, NewFormat, <<", ">>, format_args_safe(Args), <<")">>])};
+                _ ->
+                    {error, not_unicode_codepoint}
+            end;
+        _ ->
+            {error, no_tilde_s}
+    end.
+
+format_args_safe(Args) ->
+    io_lib:format("~p", [Args]).
+
+extract_format_args(Line) ->
+    % Simplified extraction - find io_lib:format(..., ...)
+    case binary:match(Line, <<"io_lib:format(">>) of
+        {Start, _} ->
+            <<_:Start/binary, Rest/binary>> = Line,
+            case find_closing_paren(Rest, 1, <<>>) of
+                {ok, Content} ->
+                    % Content is "Format, Args)"
+                    case binary:split(Content, <<", ">>) of
+                        [Format, Args] ->
+                            {ok, Format, Args};
+                        _ ->
+                            {error, cannot_parse}
+                    end;
+                error ->
+                    {error, cannot_parse}
+            end;
+        _ ->
+            {error, no_io_lib_format}
+    end.
+
+find_closing_paren(<<>>, _Depth, Acc) -> error;
+find_closing_paren(<<$), Rest/binary>>, 1, Acc) -> {ok, <<Acc/binary>>};
+find_closing_paren(<<$), Rest/binary>>, Depth, Acc) -> 
+    find_closing_paren(Rest, Depth - 1, <<Acc/binary, $)>>);
+find_closing_paren(<<$(, Rest/binary>>, Depth, Acc) -> 
+    find_closing_paren(Rest, Depth + 1, <<Acc/binary, $(>>);
+find_closing_paren(<<C, Rest/binary>>, Depth, Acc) -> 
+    find_closing_paren(Rest, Depth, <<Acc/binary, C>>).
 
 %% Fix badmatch - add catch-all pattern
 fix_badmatch(CrashData) ->
