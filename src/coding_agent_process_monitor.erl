@@ -12,7 +12,7 @@
 }).
 
 -define(MEMORY_TABLE, coding_agent_process_monitor).
--define(CRASH_DIR, ".tarha/crashes").
+-define(CRASH_DIR, ".tarha/reports").
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).

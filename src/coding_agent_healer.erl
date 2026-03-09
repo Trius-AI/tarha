@@ -8,7 +8,6 @@
 -record(state, {crashes = [], auto_heal = true, monitored = #{}}%{pid => module}
 ).
 -define(CRASH_TABLE, coding_agent_crashes).
--define(CRASH_DIR, ".tarha/crashes").
 -define(CRASH_REPORT_DIR, ".tarha/reports").
 -define(MAX_CRASHES, 100).
 -define(WORKERS, [coding_agent_process_monitor, coding_agent_self, coding_agent_healer]).

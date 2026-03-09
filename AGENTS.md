@@ -153,3 +153,8 @@ ollama_host: http://localhost:11434
 - Fixed CORS headers for web frontend
 - Fixed HTTP handler to be plain Cowboy handler
 - Session persistence correctly uses ETS table
+
+## IMPORTANT
+
+- THIS IS NOT A NODE PROJECT, THIS IS NOT A NODE PROJECT, THIS IS NOT A NODE PROJECT, DO NOT USE NPM TEST. DO NOT USE NPM TEST. DO NOT USE NPM TEST.
+
