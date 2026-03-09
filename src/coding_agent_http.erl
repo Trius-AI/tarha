@@ -32,6 +32,7 @@ start_link(Options) ->
             {"/session/:id/save", ?MODULE, #{action => session_save}},
             {"/session/:id/load", ?MODULE, #{action => session_load}},
             {"/sessions", ?MODULE, #{action => sessions_list}},
+            {"/sessions/active", ?MODULE, #{action => active_sessions}},
             {"/memory", ?MODULE, #{action => memory}},
             {"/memory/history", ?MODULE, #{action => memory_history}},
             {"/memory/consolidate", ?MODULE, #{action => memory_consolidate}},
@@ -112,6 +113,7 @@ handle_action(<<"GET">>, index, _Req) ->
             #{method => <<"POST">>, path => <<"/session/:id/save">>, description => <<"Save session to disk">>},
             #{method => <<"POST">>, path => <<"/session/:id/load">>, description => <<"Load session from disk">>},
             #{method => <<"GET">>, path => <<"/sessions">>, description => <<"List saved sessions">>},
+            #{method => <<"GET">>, path => <<"/sessions/active">>, description => <<"List active sessions">>},
             #{method => <<"GET">>, path => <<"/memory">>, description => <<"Get long-term memory">>},
             #{method => <<"POST">>, path => <<"/memory">>, description => <<"Update long-term memory">>},
             #{method => <<"GET">>, path => <<"/memory/history">>, description => <<"Get conversation history log">>},
@@ -200,6 +202,16 @@ handle_action(<<"GET">>, sessions_list, _Req) ->
         {ok, SessionIds} -> {ok, #{sessions => SessionIds, count => length(SessionIds)}};
         {error, Reason} -> {error, 500, io_lib:format("Error: ~p", [Reason])}
     end;
+
+handle_action(<<"GET">>, active_sessions, _Req) ->
+    Sessions = coding_agent_session:sessions(),
+    SessionList = lists:map(fun({Id, Pid}) ->
+        case coding_agent_session:stats(Id) of
+            {ok, Stats} -> Stats#{pid => pid_to_list(Pid)};
+            {error, _} -> #{id => Id, pid => pid_to_list(Pid)}
+        end
+    end, Sessions),
+    {ok, #{sessions => SessionList, count => length(SessionList)}};
 
 handle_action(<<"GET">>, tools, _Req) ->
     Tools = coding_agent_tools:tools(),
