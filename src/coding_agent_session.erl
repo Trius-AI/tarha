@@ -28,7 +28,8 @@
 -define(MAX_ITERATIONS, 100).
 -define(MAX_HISTORY, 50).  % Reduced from 100 - tool calls use lots of context
 -define(MAX_HISTORY_SIZE, 100000).  % 100KB max history in bytes
--define(MAX_TOOL_RESULT_SIZE, 10000).  % 10KB max per tool result (was 20KB)
+-define(MAX_TOOL_RESULT_SIZE, 50000).  % 50KB max per tool result - increased to avoid re-reads
+-define(MAX_TOTAL_RESULTS, 100000).     % 100KB total for all results in one turn
 -define(DEFAULT_CONTEXT_LENGTH, 32768).  % Default if model info unavailable
 -define(CONTEXT_USAGE_THRESHOLD, 0.85).  % Compact at 85% context usage
 -define(COMPACTION_THRESHOLD, 150000).  % ~50KB tokens
@@ -679,7 +680,7 @@ execute_tool_calls(ToolCalls, OpenFiles) when is_list(ToolCalls) ->
         (_, Acc) -> Acc
     end, OpenFiles, Results),
     ResultList = [R || {R, _} <- Results],
-    SafeResults = limit_results(ResultList, ?MAX_TOOL_RESULT_SIZE),
+    SafeResults = limit_results(ResultList, ?MAX_TOOL_RESULT_SIZE, ?MAX_TOTAL_RESULTS),
     ResultBin = serialize_results(SafeResults),
     {ResultBin, NewOpenFiles}.
 
@@ -689,35 +690,62 @@ serialize_results(Results) ->
         _:_ -> <<"[result serialization failed]">>
     end.
 
-limit_results(Results, MaxSize) when is_list(Results) ->
-    limit_results(Results, MaxSize, 0, []);
-limit_results(Results, _MaxSize) ->
+limit_results(Results, MaxPerResult, MaxTotalSize) when is_list(Results) ->
+    TotalSize = lists:foldl(fun(R, Acc) ->
+        case R of
+            #{<<"success">> := true, <<"output">> := Output} when is_binary(Output) ->
+                Acc + byte_size(Output);
+            _ -> Acc
+        end
+    end, 0, Results),
+    case TotalSize =< MaxTotalSize of
+        true -> Results;
+        false -> truncate_results_smart(Results, MaxTotalSize)
+    end;
+limit_results(Results, _MaxPerResult, _MaxTotalSize) ->
     Results.
 
-limit_results([], _MaxSize, _CurrentSize, Acc) ->
+%% Smart truncation: preserve structure and important parts
+truncate_results_smart(Results, MaxSize) ->
+    truncate_results_smart(Results, MaxSize, 0, []).
+
+truncate_results_smart([], _MaxSize, _CurrentSize, Acc) ->
     lists:reverse(Acc);
-limit_results([Result | Rest], MaxSize, CurrentSize, Acc) when CurrentSize > MaxSize ->
-    lists:reverse(Acc);
-limit_results([#{<<"success">> := true, <<"output">> := Output} = Result | Rest], MaxSize, CurrentSize, Acc) ->
-    OutputSize = case is_binary(Output) of
-        true -> byte_size(Output);
-        _ -> 0
-    end,
-    case CurrentSize + OutputSize of
-        NewSize when NewSize > MaxSize ->
-            % Truncate this result
-            Truncated = case is_binary(Output) of
-                true when byte_size(Output) > 5000 ->
-                    <<First:5000/binary, _/binary>> = Output,
-                    maps:put(<<"output">>, <<First/binary, "...">>, Result);
-                _ -> Result
-            end,
-            lists:reverse([Truncated | Acc]);
-        NewSize ->
-            limit_results(Rest, MaxSize, NewSize, [Result | Acc])
-    end;
-limit_results([Result | Rest], MaxSize, CurrentSize, Acc) ->
-    limit_results(Rest, MaxSize, CurrentSize, [Result | Acc]).
+truncate_results_smart([Result | Rest], MaxSize, CurrentSize, Acc) ->
+    case Result of
+        #{<<"success">> := true, <<"output">> := Output} when is_binary(Output) ->
+            OutputSize = byte_size(Output),
+            case CurrentSize + OutputSize of
+                NewSize when NewSize =< MaxSize ->
+                    truncate_results_smart(Rest, MaxSize, NewSize, [Result | Acc]);
+                _ when CurrentSize < MaxSize * 0.8 ->
+                    % Still have room, truncate just this result
+                    TruncatedOutput = smart_truncate(Output, MaxSize - CurrentSize),
+                    TruncatedResult = Result#{<<"output">> => TruncatedOutput},
+                    lists:reverse([TruncatedResult | Acc]);
+                _ ->
+                    % Already near limit, summarize remaining
+                    Summary = iolist_to_binary([
+                        <<"... ">>,
+                        integer_to_binary(length(Rest) + 1),
+                        <<" more results truncated for context limit">>
+                    ]),
+                    lists:reverse([Result#{<<"output">> => Summary} | Acc])
+            end;
+        _ ->
+            truncate_results_smart(Rest, MaxSize, CurrentSize, [Result | Acc])
+    end.
+
+smart_truncate(Content, MaxSize) when byte_size(Content) =< MaxSize ->
+    Content;
+smart_truncate(Content, MaxSize) ->
+    HalfSize = MaxSize div 2,
+    case Content of
+        <<First:HalfSize/binary, _/binary>> ->
+            <<First/binary, "\n\n... (content truncated) ...\n\n">>;
+        _ ->
+            <<Content/binary, " ... (truncated)">>
+    end.
 
 execute_single_tool_with_retry(TC, OpenFiles) ->
     execute_single_tool_with_retry(TC, OpenFiles, 0).
