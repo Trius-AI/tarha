@@ -64,10 +64,21 @@ do_with_retry(Fun, RetryCount) ->
             timer:sleep(Delay),
             do_with_retry(Fun, RetryCount + 1);
         {error, Reason} ->
-            io:format("[ollama] Error ~p, retrying in ~pms (attempt ~p/~p)~n", 
-                      [Reason, Delay, RetryCount + 1, ?MAX_RETRIES]),
-            timer:sleep(Delay),
-            do_with_retry(Fun, RetryCount + 1)
+            ReasonBin = iolist_to_binary(io_lib:format("~p", [Reason])),
+            IsTransient = binary:match(ReasonBin, <<"connrefused">>) =/= nomatch
+                orelse binary:match(ReasonBin, <<"nxdomain">>) =/= nomatch
+                orelse binary:match(ReasonBin, <<"timeout">>) =/= nomatch
+                orelse binary:match(ReasonBin, <<"closed">>) =/= nomatch
+                orelse binary:match(ReasonBin, <<"econnreset">>) =/= nomatch,
+            case IsTransient of
+                true ->
+                    io:format("[ollama] Network error ~p, retrying in ~pms (attempt ~p/~p)~n", 
+                              [Reason, Delay, RetryCount + 1, ?MAX_RETRIES]),
+                    timer:sleep(Delay),
+                    do_with_retry(Fun, RetryCount + 1);
+                false ->
+                    {error, Reason}
+            end
     end.
 
 generate(Model, Prompt) ->
