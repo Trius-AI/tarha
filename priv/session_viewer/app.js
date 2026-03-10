@@ -191,13 +191,6 @@ class SessionViewer {
             });
         });
 
-        container.querySelectorAll('.btn-load').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.loadSession(btn.dataset.sessionId);
-            });
-        });
-
         container.querySelectorAll('.btn-delete').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -282,7 +275,7 @@ class SessionViewer {
                     </div>
                 </div>
                 <div class="session-actions">
-                    <button class="btn-primary btn-load" data-session-id="${this.escapeHtml(sessionId)}">Load</button>
+                    <button class="btn-secondary btn-stats" data-session-id="${this.escapeHtml(sessionId)}">Details</button>
                     <button class="btn-danger btn-delete" data-session-id="${this.escapeHtml(sessionId)}">Delete</button>
                 </div>
             </div>
@@ -389,20 +382,6 @@ class SessionViewer {
             await this.refresh();
         } catch (error) {
             alert(`Error halting session: ${error.message}`);
-        }
-    }
-
-    async loadSession(sessionId) {
-        if (!confirm(`Load session ${this.truncateId(sessionId)}?`)) {
-            return;
-        }
-
-        try {
-            const result = await this.postJson(`/session/${sessionId}/load`, {});
-            alert(`Session loaded: ${result.session_id}`);
-            await this.refresh();
-        } catch (error) {
-            alert(`Error loading session: ${error.message}`);
         }
     }
 
