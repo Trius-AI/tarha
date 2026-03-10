@@ -547,6 +547,22 @@ tools() ->
                 }
             }
         },
+        % Merge Conflict Resolution
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"resolve_merge_conflicts">>,
+                <<"description">> => <<"Resolve git merge conflicts in files. Can auto-resolve using 'ours', 'theirs', or 'both' strategy.">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"file">> => #{<<"type">> => <<"string">>, <<"description">> => <<"File to resolve conflicts in (optional, resolves all if not specified)">>},
+                        <<"strategy">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Resolution strategy: 'ours' (keep current), 'theirs' (keep incoming), 'both' (keep both), 'smart' (prefer non-empty, default: smart)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
         % Test Generation
         #{
             <<"type">> => <<"function">>,
@@ -1222,6 +1238,43 @@ execute(<<"smart_commit">>, Args) ->
             end
     end;
 
+% Merge Conflict Resolution
+execute(<<"resolve_merge_conflicts">>, Args) ->
+    File = maps:get(<<"file">>, Args, undefined),
+    Strategy = maps:get(<<"strategy">>, Args, <<"smart">>),
+    
+    % Find files with conflicts
+    ConflictFiles = case File of
+        undefined -> 
+            Output = os:cmd("git diff --name-only --diff-filter=U 2>/dev/null"),
+            string:tokens(Output, "\n");
+        F ->
+            [binary_to_list(F)]
+    end,
+    
+    case ConflictFiles of
+        [] ->
+            #{<<"success">> => true, <<"message">> => <<"No merge conflicts found.">>};
+        Files ->
+            Results = lists:map(fun(FilePath) ->
+                case resolve_conflicts_in_file(FilePath, Strategy) of
+                    {ok, Resolution} ->
+                        #{<<"file">> => list_to_binary(FilePath), 
+                          <<"status">> => <<"resolved">>,
+                          <<"strategy">> => Resolution};
+                    {error, Reason} ->
+                        #{<<"file">> => list_to_binary(FilePath),
+                          <<"status">> => <<"failed">>,
+                          <<"error">> => Reason}
+                end
+            end, Files),
+            SuccessCount = length([R || R <- Results, maps:get(<<"status">>, R) == <<"resolved">>]),
+            #{<<"success">> => true,
+              <<"resolved_count">> => SuccessCount,
+              <<"total_count">> => length(Files),
+              <<"files">> => Results}
+    end;
+
 % Code Review
 execute(<<"review_changes">>, Args) ->
     Staged = maps:get(<<"staged">>, Args, true),
@@ -1593,6 +1646,102 @@ contains_merge_conflict(Cmd) when is_list(Cmd) ->
 contains_merge_conflict(Cmd) when is_binary(Cmd) ->
     contains_merge_conflict(binary_to_list(Cmd));
 contains_merge_conflict(_) -> false.
+
+%% Resolve merge conflicts in a file using the specified strategy
+resolve_conflicts_in_file(FilePath, Strategy) ->
+    case file:read_file(FilePath) of
+        {error, Reason} ->
+            {error, list_to_binary(io_lib:format("Cannot read file: ~p", [Reason]))};
+        {ok, Content} ->
+            Resolved = resolve_conflicts(Content, Strategy),
+            case Resolved =:= Content of
+                true ->
+                    {ok, <<"no_change">>};
+                false ->
+                    case file:write_file(FilePath, Resolved) of
+                        ok ->
+                            {ok, Strategy};
+                        {error, Reason} ->
+                            {error, list_to_binary(io_lib:format("Cannot write file: ~p", [Reason]))}
+                    end
+            end
+    end.
+
+%% Resolve conflicts in content
+resolve_conflicts(Content, <<"ours">>) ->
+    resolve_conflicts_with_strategy(Content, ours);
+resolve_conflicts(Content, <<"theirs">>) ->
+    resolve_conflicts_with_strategy(Content, theirs);
+resolve_conflicts(Content, <<"both">>) ->
+    resolve_conflicts_with_strategy(Content, both);
+resolve_conflicts(Content, <<"smart">>) ->
+    resolve_conflicts_with_strategy(Content, smart);
+resolve_conflicts(Content, _) ->
+    resolve_conflicts_with_strategy(Content, smart).
+
+resolve_conflicts_with_strategy(Content, Strategy) ->
+    Lines = binary:split(Content, <<"\n">>, [global]),
+    ResolvedLines = resolve_conflict_lines(Lines, Strategy, [], false, []),
+    iolist_to_binary(lists:join(<<"\n">>, ResolvedLines)).
+
+resolve_conflict_lines([], _Strategy, _CurrentBlock, _InConflict, Acc) ->
+    lists:reverse(Acc);
+resolve_conflict_lines([Line | Rest], Strategy, CurrentBlock, InConflict, Acc) ->
+    case {InConflict, binary:match(Line, <<"<<<<<<<">>)} of
+        {false, nomatch} ->
+            resolve_conflict_lines(Rest, Strategy, [], false, [Line | Acc]);
+        {false, _} ->
+            resolve_conflict_lines(Rest, Strategy, [], true, Acc);
+        {true, _} ->
+            case binary:match(Line, <<"=======">>) of
+                nomatch ->
+                    resolve_conflict_lines(Rest, Strategy, [Line | CurrentBlock], true, Acc);
+                _ ->
+                    {Ours, Rest1} = collect_ours_section(CurrentBlock, []),
+                    {Theirs, Rest2} = collect_theirs_section(Rest, []),
+                    ResolvedLine = resolve_conflict_block(Ours, Theirs, Strategy),
+                    resolve_conflict_lines(Rest2, Strategy, [], false, [ResolvedLine | Acc])
+            end
+    end.
+
+collect_ours_section([], Acc) -> {lists:reverse(Acc), []};
+collect_ours_section([Line | Rest], Acc) ->
+    case binary:match(Line, <<"=======">>) of
+        nomatch -> collect_ours_section(Rest, [Line | Acc]);
+        _ -> {lists:reverse(Acc), Rest}
+    end.
+
+collect_theirs_section([], Acc) -> {lists:reverse(Acc), []};
+collect_theirs_section([Line | Rest], Acc) ->
+    case binary:match(Line, <<">>>>>>>">>) of
+        nomatch -> collect_theirs_section(Rest, [Line | Acc]);
+        _ -> {lists:reverse(Acc), Rest}
+    end.
+
+resolve_conflict_block(Ours, Theirs, ours) ->
+    iolist_to_binary(lists:join(<<"\n">>, Ours));
+resolve_conflict_block(Ours, Theirs, theirs) ->
+    iolist_to_binary(lists:join(<<"\n">>, Theirs));
+resolve_conflict_block(Ours, Theirs, both) ->
+    All = Ours ++ Theirs,
+    iolist_to_binary(lists:join(<<"\n">>, All));
+resolve_conflict_block(Ours, Theirs, smart) ->
+    case {Ours, Theirs} of
+        {[], Theirs} -> iolist_to_binary(lists:join(<<"\n">>, Theirs));
+        {Ours, []} -> iolist_to_binary(lists:join(<<"\n">>, Ours));
+        {Ours, Theirs} ->
+            OursContent = iolist_to_binary(lists:join(<<"\n">>, Ours)),
+            TheirsContent = iolist_to_binary(lists:join(<<"\n">>, Theirs)),
+            HasImport = fun(C) -> binary:match(C, <<"import">>) =/= nomatch 
+                                      orelse binary:match(C, <<"-include">>) =/= nomatch end,
+            case {byte_size(TheirsContent) > byte_size(OursContent),
+                  HasImport(TheirsContent), HasImport(OursContent)} of
+                {true, _, _} -> TheirsContent;
+                {false, true, false} -> TheirsContent;
+                {false, false, true} -> OursContent;
+                _ -> OursContent
+            end
+    end.
 
 clean_output(String) when is_binary(String) ->
     MaxSize = 50000,

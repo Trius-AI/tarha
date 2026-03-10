@@ -39,7 +39,9 @@ handle_call({load, SessionId}, _From, State = #state{dir = Dir}) ->
         {ok, Content} ->
             case jsx:is_json(Content) of
                 true ->
-                    Data = jsx:decode(Content, [return_maps]),
+                    %% Use {labels, atom} to convert JSON keys to atoms
+                    %% This matches how we access the data in restore_state
+                    Data = jsx:decode(Content, [return_maps, {labels, atom}]),
                     {reply, {ok, Data}, State};
                 false ->
                     {reply, {error, invalid_json}, State}

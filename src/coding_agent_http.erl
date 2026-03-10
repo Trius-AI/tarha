@@ -225,13 +225,13 @@ handle_action(<<"GET">>, sessions_list, _Req) ->
                         %% Extract summary info
                         Summary = #{
                             id => SessionIdBin,
-                            model => maps:get(<<"model">>, Data, <<"unknown">>),
-                            messages => length(maps:get(<<"messages">>, Data, [])),
-                            prompt_tokens => maps:get(<<"prompt_tokens">>, Data, 0),
-                            completion_tokens => maps:get(<<"completion_tokens">>, Data, 0),
-                            total_tokens => maps:get(<<"total_tokens">>, Data, 0),
-                            tool_calls => maps:get(<<"tool_calls">>, Data, 0),
-                            working_dir => maps:get(<<"working_dir">>, Data, <<"">>),
+                            model => maps:get(model, Data, <<"unknown">>),
+                            messages => length(maps:get(messages, Data, [])),
+                            prompt_tokens => maps:get(prompt_tokens, Data, 0),
+                            completion_tokens => maps:get(completion_tokens, Data, 0),
+                            total_tokens => maps:get(total_tokens, Data, 0),
+                            tool_calls => maps:get(tool_calls, Data, 0),
+                            working_dir => maps:get(working_dir, Data, <<"">>),
                             status => <<"saved">>
                         },
                         {true, Summary};
@@ -465,21 +465,21 @@ get_session_status(SessionId) when is_binary(SessionId) ->
     case coding_agent_session:stats(SessionId) of
         {ok, Stats} -> 
             {ok, Stats#{status => <<"active">>}};
-        {error, not_found} ->
+        {error, session_not_found} ->
             %% Not active, check if it's a saved session
             case coding_agent_session_store:load_session(SessionId) of
                 {ok, Data} ->
                     %% Extract summary info from saved session
                     Summary = #{
                         id => SessionId,
-                        model => maps:get(<<"model">>, Data, <<"unknown">>),
-                        message_count => length(maps:get(<<"messages">>, Data, [])),
-                        messages => maps:get(<<"messages">>, Data, []),
-                        prompt_tokens => maps:get(<<"prompt_tokens">>, Data, 0),
-                        completion_tokens => maps:get(<<"completion_tokens">>, Data, 0),
-                        total_tokens => maps:get(<<"total_tokens">>, Data, 0),
-                        tool_calls => maps:get(<<"tool_calls">>, Data, 0),
-                        working_dir => maps:get(<<"working_dir">>, Data, <<>>),
+                        model => maps:get(model, Data, <<"unknown">>),
+                        message_count => length(maps:get(messages, Data, [])),
+                        messages => maps:get(messages, Data, []),
+                        prompt_tokens => maps:get(prompt_tokens, Data, 0),
+                        completion_tokens => maps:get(completion_tokens, Data, 0),
+                        total_tokens => maps:get(total_tokens, Data, 0),
+                        tool_calls => maps:get(tool_calls, Data, 0),
+                        working_dir => maps:get(working_dir, Data, <<>>),
                         status => <<"saved">>
                     },
                     {ok, Summary};
