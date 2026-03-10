@@ -1560,25 +1560,39 @@ run_git_command(Cmd) ->
             #{<<"success">> => true, <<"output">> => CleanResult}
     end.
 
-run_command_impl(Cmd, _Timeout, Cwd) ->
-    OldCwd = file:get_cwd(),
-    case Cwd of
-        "." -> ok;
-        _ -> file:set_cwd(Cwd)
-    end,
-    try
-        case os:cmd(Cmd) of
-            [] -> #{<<"success">> => true, <<"output">> => <<>>};
-            Result when is_list(Result) ->
-                CleanResult = clean_output(Result),
-                #{<<"success">> => true, <<"output">> => unicode:characters_to_binary(CleanResult)}
-        end
-    after
-        case OldCwd of
-            {ok, D} -> file:set_cwd(D);
-            _ -> ok
-        end
+run_command_impl(Cmd, Timeout, Cwd) ->
+    % Check for merge conflict markers in command
+    case contains_merge_conflict(Cmd) of
+        true ->
+            #{<<"success">> => false, 
+              <<"error">> => <<"Command contains merge conflict markers (<<<<<<<, =======, >>>>>>>). Please resolve conflicts first.">>};
+        false ->
+            OldCwd = file:get_cwd(),
+            case Cwd of
+                "." -> ok;
+                _ -> file:set_cwd(Cwd)
+            end,
+            try
+                case os:cmd(Cmd) of
+                    [] -> #{<<"success">> => true, <<"output">> => <<>>};
+                    Result when is_list(Result) ->
+                        CleanResult = clean_output(Result),
+                        #{<<"success">> => true, <<"output">> => unicode:characters_to_binary(CleanResult)}
+                end
+            after
+                case OldCwd of
+                    {ok, D} -> file:set_cwd(D);
+                    _ -> ok
+                end
+            end
     end.
+
+contains_merge_conflict(Cmd) when is_list(Cmd) ->
+    lists:any(fun(Pattern) -> string:str(Cmd, Pattern) > 0 end,
+              ["<<<<<<<", "=======", ">>>>>>>"]);
+contains_merge_conflict(Cmd) when is_binary(Cmd) ->
+    contains_merge_conflict(binary_to_list(Cmd));
+contains_merge_conflict(_) -> false.
 
 clean_output(String) when is_binary(String) ->
     MaxSize = 50000,
