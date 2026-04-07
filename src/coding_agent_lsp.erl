@@ -228,10 +228,11 @@ detect_type(Word, _FilePath) ->
     case Word of
         <<$:, _/binary>> -> atom;
         <<$#, _/binary>> -> variable;
-        _ when is_binary(Word) -> 
-            case binary:first(Word) of
-                $A when $A >= $A, $A =< $Z -> variable;
-                _ -> function
+        _ when is_binary(Word), byte_size(Word) > 0 ->
+            C = binary:first(Word),
+            case C >= $A andalso C =< $Z of
+                true -> variable;
+                false -> function
             end;
         _ -> unknown
     end.

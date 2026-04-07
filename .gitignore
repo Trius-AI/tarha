@@ -1,9 +1,9 @@
 # Build artifacts
 _build/
-rebar.lock
 *.beam
 *.o
 *.plt
+rebar.lock
 
 # Erlang
 .erlang.cookie
@@ -36,31 +36,38 @@ npm-debug.log
 # Temporary files
 tmp/
 tmp.*/
-erl_crash.dump
 
 # Coding agent runtime
 .coding_agent_history
 .coding_agent_reports/
+.coding_agent_checkpoints/
 conv.md
 context.md
+context.txt
 example-project/
-test/
-*.crashdumpsessions/*.json
-sessions/*.json
+
+# Stale directories (keep in gitignore so they don't reappear)
+sessions/
+chat/
+skills/
+.codex
 
 # Crash dumps
 erl_crash.dump
 *.crashdump
 .coding_agent_crashes/
-.coding_agent_reports/
+rebar3.crashdump
 
 # Generated files
 .tarha/backups/
 .tarha/reports/
-.tarha/sessions/*.json
+.tarha/sessions/
 .tarha/history
 dump.txt
 
 # Test/temp files
 test_command_matching*
 COMMAND_MATCHING_TEST_RESULTS.md
+backlog.md
+test.md
+.codex

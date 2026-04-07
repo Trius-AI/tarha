@@ -2,7 +2,7 @@
 
 > An AI-powered coding assistant built in Erlang with Ollama tool calling capabilities.
 
-A production-ready coding agent that uses Ollama for AI-powered code assistance with comprehensive tool support, conversational context management, and multiple interfaces (REPL, HTTP API, Zulip bot).
+A production-ready coding agent that uses Ollama for AI-powered code assistance with comprehensive tool support, conversational context management, and an interactive REPL interface.
 
 ## Features
 
@@ -29,8 +29,6 @@ A production-ready coding agent that uses Ollama for AI-powered code assistance 
 
 ### Interfaces
 - **REPL** — Interactive terminal interface (`./coder`)
-- **HTTP API** — RESTful API with streaming support (`./coder-http`)
-- **Zulip Bot** — Chat bot integration (`./coder-zulip`)
 
 ## Quick Start
 
@@ -57,10 +55,6 @@ ollama:
   host: "http://localhost:11434"
   model: "glm-5:cloud"
 
-http:
-  enabled: true
-  port: 8080
-
 agent:
   max_tokens: 80000
   temperature: 0.7
@@ -78,15 +72,6 @@ export OLLAMA_HOST="http://localhost:11434"
 ```bash
 # Interactive REPL
 ./coder
-
-# HTTP Server (port 8080)
-./coder-http
-
-# HTTP Server with custom port
-./coder-http 3000
-
-# Zulip Bot (requires config.yaml)
-./coder-zulip
 ```
 
 ## Usage
@@ -120,42 +105,6 @@ application:ensure_all_started(coding_agent).
 coding_agent_session:stop_session(SessionId).
 ```
 
-### HTTP API
-
-```bash
-# Health check
-curl http://localhost:8080/health
-
-# Send a message (creates new session automatically)
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"message":"What is 2+2?"}' \
-  http://localhost:8080/chat
-
-# Continue existing session
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"message":"What about 3+3?", "session_id":"SESSION_ID"}' \
-  http://localhost:8080/chat
-
-# Create named session
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"action":"create"}' \
-  http://localhost:8080/session
-
-# List tools
-curl http://localhost:8080/tools
-
-# Get memory
-curl http://localhost:8080/memory
-```
-
-### Streaming API (Server-Sent Events)
-
-```bash
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"message":"Explain the project structure"}' \
-  http://localhost:8080/chat/stream
-```
-
 ### Memory System
 
 The agent has a two-layer memory system:
@@ -163,35 +112,9 @@ The agent has a two-layer memory system:
 1. **MEMORY.md** — Long-term memory (facts, preferences)
 2. **HISTORY.md** — Grep-searchable conversation history
 
-```bash
-# Get memory
-curl http://localhost:8080/memory
-
-# Update memory
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"content":"# User Preferences\n- Name: Alice\n- Project: my-app"}' \
-  http://localhost:8080/memory
-
-# Get history
-curl http://localhost:8080/memory/history
-
-# Trigger consolidation
-curl -X POST http://localhost:8080/memory/consolidate
-```
-
 ### Skills
 
-Skills are modular capabilities that can be loaded dynamically:
-
-```bash
-# List available skills
-curl http://localhost:8080/skills
-
-# Get skill details
-curl http://localhost:8080/skills/weather
-```
-
-Skills are stored in `priv/skills/` (built-in) and `skills/` (user-defined).
+Skills are modular capabilities that can be loaded dynamically. Skills are stored in `priv/skills/` (built-in) and `skills/` (user-defined).
 
 ## Project Structure
 
@@ -216,8 +139,6 @@ src/
 ├── coding_agent_skills.erl      # Skills loader
 ├── coding_agent_repl.erl        # Interactive REPL
 ├── coding_agent_cli.erl         # CLI interface
-├── coding_agent_http.erl        # HTTP API (Cowboy)
-├── coding_agent_zulip.erl       # Zulip bot integration
 └── coding_agent_config.erl      # Config loader
 
 priv/skills/                      # Built-in skills
@@ -304,13 +225,11 @@ coding_agent_session:ask(Sess, <<"Grep for 'gen_server' in all .erl files">>).
 5. **Context management** — Token estimation and file caching
 6. **Memory system** — Long-term memory and conversation history
 7. **Skills system** — Extensible capabilities via skill modules
-8. **HTTP API** — RESTful API with streaming support for web integration
 
 ## Dependencies
 
 - **hackney** — HTTP client for Ollama API
 - **jsx** — JSON parsing/encoding
-- **cowboy** — HTTP server for API
 
 ## Development
 

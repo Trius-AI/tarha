@@ -40,18 +40,22 @@ init([Model]) ->
 
 handle_call({stream, Messages, Tools, Callback}, _From, State = #state{model = Model}) ->
     RequestId = make_ref(),
-    case coding_agent_ollama:chat_stream_with_tools(Model, Messages, Tools, self(), RequestId) of
-        {ok, _Pid} ->
-            {noreply, State#state{
-                request_id = RequestId,
-                callback = Callback,
-                buffer = <<>>,
-                thinking_buffer = <<>>,
-                cancelled = false
-            }, 30000};
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
-    end;
+    Self = self(),
+    StreamCallback = fun(_Chunk, #{thinking := Thinking, content := Content,
+                                   thinking_acc := ThinkAcc, content_acc := ContentAcc}) ->
+        Self ! {stream_chunk, RequestId, Thinking, Content, ThinkAcc, ContentAcc}
+    end,
+    spawn_link(fun() ->
+        Result = coding_agent_ollama:chat_stream(Model, Messages, Tools, StreamCallback),
+        Self ! {stream_complete, RequestId, Result}
+    end),
+    {noreply, State#state{
+        request_id = RequestId,
+        callback = Callback,
+        buffer = <<>>,
+        thinking_buffer = <<>>,
+        cancelled = false
+    }, 30000};
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
@@ -62,36 +66,30 @@ handle_cast({set_callback, Callback}, State) ->
 handle_cast(cancel, State) ->
     {noreply, State#state{cancelled = true}}.
 
-handle_info({stream_chunk, RequestId, Chunk, #{thinking := Thinking, content := Content}}, 
-            State = #state{request_id = RequestId, callback = Callback, cancelled = Cancelled,
-                          buffer = Buffer, thinking_buffer = ThinkBuffer}) ->
+handle_info({stream_chunk, RequestId, Thinking, Content, ThinkAcc, ContentAcc},
+            State = #state{request_id = RequestId, callback = Callback, cancelled = Cancelled}) ->
     case Cancelled of
         true -> {noreply, State};
         false ->
-            NewBuffer = case Content of
-                <<>> -> Buffer;
-                _ -> <<Buffer/binary, Content/binary>>
-            end,
-            NewThinkBuffer = case Thinking of
-                <<>> -> ThinkBuffer;
-                _ -> <<ThinkBuffer/binary, Thinking/binary>>
-            end,
             case Callback of
                 undefined -> ok;
                 Fun when is_function(Fun, 3) ->
-                    try Fun(Content, Thinking, #{buffer => NewBuffer, thinking => NewThinkBuffer})
+                    try Fun(Content, Thinking, #{buffer => ContentAcc, thinking => ThinkAcc})
                     catch _:_ -> ok
                     end
             end,
-            {noreply, State#state{buffer = NewBuffer, thinking_buffer = NewThinkBuffer}}
+            {noreply, State#state{buffer = ContentAcc, thinking_buffer = ThinkAcc}}
     end;
 
-handle_info({stream_complete, RequestId, Response}, State = #state{request_id = RequestId}) ->
+handle_info({stream_complete, RequestId, {ok, Response}}, State = #state{request_id = RequestId}) ->
     FinalResponse = Response#{
-        <<"content">> => State#state.buffer,
-        <<"thinking">> => State#state.thinking_buffer
+        content => State#state.buffer,
+        thinking => State#state.thinking_buffer
     },
     {stop, normal, {ok, FinalResponse}, State#state{request_id = undefined}};
+
+handle_info({stream_complete, RequestId, {error, Reason}}, State = #state{request_id = RequestId}) ->
+    {stop, normal, {error, Reason}, State#state{request_id = undefined}};
 
 handle_info({stream_error, RequestId, Reason}, State = #state{request_id = RequestId}) ->
     {stop, normal, {error, Reason}, State#state{request_id = undefined}};

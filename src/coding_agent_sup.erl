@@ -70,25 +70,4 @@ init([]) ->
           type => worker,
           modules => [coding_agent]}
     ],
-    HTTPChild = case application:get_env(coding_agent, http_port) of
-        {ok, _Port} ->
-            [#{id => coding_agent_http,
-              start => {coding_agent_http, start_link, []},
-              restart => permanent,
-              shutdown => 5000,
-              type => worker,
-              modules => [coding_agent_http]}];
-        _ -> []
-    end,
-    ZulipChild = case application:get_env(coding_agent, zulip_site) of
-        {ok, _Site} ->
-            [#{id => coding_agent_zulip,
-              start => {coding_agent_zulip, start_link, []},
-              restart => permanent,
-              shutdown => 5000,
-              type => worker,
-              modules => [coding_agent_zulip]}];
-        _ -> []
-    end,
-    Children = BaseChildren ++ HTTPChild ++ ZulipChild,
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 60}, Children}}.
+    {ok, {#{strategy => one_for_one, intensity => 5, period => 60}, BaseChildren}}.

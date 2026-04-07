@@ -8,10 +8,11 @@
 -define(VERSIONS_DIR, ".tarha/versions").
 -define(CHECKPOINT_DIR, ".tarha/checkpoints").
 -define(MAX_VERSIONS, 5).  % Keep last 5 versions per module
--define(MODULES, [coding_agent_app, coding_agent_sup, coding_agent_ollama, coding_agent_tools, coding_agent, 
-                  coding_agent_session_sup, coding_agent_session, coding_agent_stream, coding_agent_lsp, 
+-define(MODULES, [coding_agent_app, coding_agent_sup, coding_agent_ollama, coding_agent_tools, coding_agent,
+                  coding_agent_session_sup, coding_agent_session, coding_agent_stream, coding_agent_lsp,
                   coding_agent_index, coding_agent_self, coding_agent_healer, coding_agent_process_monitor,
-                  coding_agent_conv_memory, coding_agent_skills, coding_agent_http, coding_agent_repl]).
+                  coding_agent_conv_memory, coding_agent_skills, coding_agent_cli, coding_agent_repl,
+                  coding_agent_undo, coding_agent_request_registry]).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 reload_module(M) -> reload_module(M, #{rollback_on_crash => true}).
