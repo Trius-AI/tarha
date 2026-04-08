@@ -4,25 +4,19 @@
 main([]) ->
     io:format("Usage: coding_agent_cli <command> [args]~n"),
     io:format("Commands:~n"),
-    io:format("  ask <question>    - Ask a question in a new session~n");
+    io:format("  ~s~n", [coding_agent_ansi:bright_white("ask <question>") ++ coding_agent_ansi:dim("    - Ask a question in a new session")]);
 
 main(["ask" | QuestionParts]) ->
     Question = string:join(QuestionParts, " "),
-    start_app(),
-    {ok, {SessionId, _Pid}} = coding_agent_session:new(),
-    case coding_agent_session:ask(SessionId, Question) of
+    application:ensure_all_started(coding_agent),
+    {ok, {_SessionId, _Pid}} = coding_agent_session:new(),
+    case coding_agent_session:ask(_SessionId, Question) of
         {ok, Response, _Thinking} ->
             io:format("~s~n", [Response]);
         {error, Reason} ->
-            io:format("Error: ~p~n", [Reason])
+            io:format("~s ~p~n", [coding_agent_ansi:bright_red("Error:"), Reason])
     end,
-    stop_app();
+    application:stop(coding_agent);
 
 main([_ | _]) ->
-    io:format("Unknown command. Use without arguments for help.~n").
-
-start_app() ->
-    application:ensure_all_started(coding_agent).
-
-stop_app() ->
-    application:stop(coding_agent).
+    io:format("~s~n", [coding_agent_ansi:bright_yellow("Unknown command. Use without arguments for help.")]).

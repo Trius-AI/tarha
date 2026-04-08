@@ -23,44 +23,45 @@ start(_Args) ->
         put(?PLAN_KEY, <<"">>),
         
         io:format("~n"),
-        io:format("╔════════════════════════════════════════════════════════════╗~n"),
-        io:format("║       Coding Agent REPL - Interactive Shell                ║~n"),
-        io:format("║       Model: ~s~n", [get_model()]),
-        io:format("╠════════════════════════════════════════════════════════════╣~n"),
-        io:format("║ Commands:                                                  ║~n"),
-        io:format("║   /help          - Show this help                         ║~n"),
-        io:format("║   /status        - Show session/memory status            ║~n"),
-        io:format("║   /history       - Show conversation history               ║~n"),
-        io:format("║   /tools         - List available tools                    ║~n"),
-        io:format("║   /models        - List available Ollama models           ║~n"),
-        io:format("║   /model <name>  - Show model details                     ║~n"),
-        io:format("║   /switch <name> - Switch to different model              ║~n"),
-        io:format("║   /context [size]- Show/set context size                 ║~n"),
-        io:format("║   /modules       - List agent modules                      ║~n"),
-        io:format("║   /reload [mod]  - Hot reload module (all if no arg)      ║~n"),
-        io:format("║   /checkpoint    - Create checkpoint                      ║~n"),
-        io:format("║   /restore <id>  - Restore from checkpoint                ║~n"),
-        io:format("║   /clear         - Clear session history                  ║~n"),
-        io:format("║   /trim           - Force memory cleanup                    ║~n"),
-        io:format("║   /plan          - Enter plan mode                        ║~n"),
-        io:format("║   /build         - Exit plan mode, enter build mode       ║~n"),
-        io:format("║   /showplan      - Show current plan                      ║~n"),
-        io:format("║   /editplan      - Edit plan in editor                    ║~n"),
-        io:format("║   /quit, /exit   - Exit the REPL                          ║~n"),
-        io:format("╚════════════════════════════════════════════════════════════╝~n"),
+        A = coding_agent_ansi,
+        io:format("~ts~n", [A:bright_cyan("╔════════════════════════════════════════════════════════════╗")]),
+        io:format("~ts~n", [A:bright_cyan("║ ") ++ A:bold(A:bright_cyan("Coding Agent REPL - Interactive Shell")) ++ A:bright_cyan("                ║")]),
+        io:format("~ts~n", [A:bright_cyan("║       ") ++ A:bright_yellow("Model:") ++ " " ++ A:bright_green(get_model())]),
+        io:format("~ts~n", [A:bright_cyan("╠════════════════════════════════════════════════════════════╣")]),
+        io:format("~ts~n", [A:bright_cyan("║ ") ++ A:bright_yellow("Commands:") ++ A:bright_cyan("                                                  ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/help") ++ A:dim("          - Show this help") ++ A:bright_cyan("                         ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/status") ++ A:dim("        - Show session/memory status") ++ A:bright_cyan("            ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/history") ++ A:dim("       - Show conversation history") ++ A:bright_cyan("               ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/tools") ++ A:dim("         - List available tools") ++ A:bright_cyan("                    ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/models") ++ A:dim("        - List available Ollama models") ++ A:bright_cyan("           ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/model <name>") ++ A:dim("  - Show model details") ++ A:bright_cyan("                     ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/switch <name>") ++ A:dim(" - Switch to different model") ++ A:bright_cyan("              ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/context [size]") ++ A:dim("- Show/set context size") ++ A:bright_cyan("                 ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/modules") ++ A:dim("       - List agent modules") ++ A:bright_cyan("                      ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/reload [mod]") ++ A:dim("  - Hot reload module (all if no arg)") ++ A:bright_cyan("      ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/checkpoint") ++ A:dim("    - Create checkpoint") ++ A:bright_cyan("                      ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/restore <id>") ++ A:dim("  - Restore from checkpoint") ++ A:bright_cyan("                ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/clear") ++ A:dim("         - Clear session history") ++ A:bright_cyan("                  ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/trim") ++ A:dim("           - Force memory cleanup") ++ A:bright_cyan("                    ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/plan") ++ A:dim("          - Enter plan mode") ++ A:bright_cyan("                        ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/build") ++ A:dim("         - Exit plan mode, enter build mode") ++ A:bright_cyan("       ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/showplan") ++ A:dim("      - Show current plan") ++ A:bright_cyan("                      ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/editplan") ++ A:dim("      - Edit plan in editor") ++ A:bright_cyan("                    ║")]),
+        io:format("~ts~n", [A:bright_cyan("║   ") ++ A:bright_white("/quit, /exit") ++ A:dim("   - Exit the REPL") ++ A:bright_cyan("                          ║")]),
+        io:format("~ts~n", [A:bright_cyan("╚════════════════════════════════════════════════════════════╝")]),
         io:format("~n"),
         
         {ok, {SessionId, _Pid}} = coding_agent_session:new(),
-        io:format("Session started: ~s~n~n", [SessionId]),
+        io:format("Session started: ~ts~n~n", [coding_agent_ansi:bright_magenta(SessionId)]),
         
         History = load_history(),
         
-        io:format("Type your message and press Enter (/help for commands):~n~n"),
+        io:format("~s~n~n", [coding_agent_ansi:dim("Type your message and press Enter (/help for commands)")]),
         loop(SessionId, History, build),
         ok
     catch
         Type:Error:Stacktrace ->
-            io:format("~nError starting REPL: ~p:~p~n", [Type, Error]),
+            io:format("~n~s ~p:~p~n", [coding_agent_ansi:bright_red("Error starting REPL:"), Type, Error]),
             io:format("Stack: ~p~n", [Stacktrace]),
             init:stop(1),
             ok
@@ -99,26 +100,26 @@ set_current_plan(Plan) ->
     put(?PLAN_KEY, Plan).
 
 get_mode_prompt(build) ->
-    "coder> ";
+    coding_agent_ansi:bright_cyan("coder") ++ "> ";
 get_mode_prompt(plan) ->
-    "plan> ".
+    coding_agent_ansi:bright_magenta("plan") ++ "> ".
 
 get_mode_indicator(build) ->
-    "[BUILD]";
+    coding_agent_ansi:bright_cyan("[BUILD]");
 get_mode_indicator(plan) ->
-    "[PLAN]".
+    coding_agent_ansi:bright_magenta("[PLAN]").
 
 loop(SessionId, History, Mode) ->
     Prompt = get_mode_prompt(Mode),
-    io:format("~s", [Prompt]),
+    io:format("~ts", [Prompt]),
     flush_pending_output(),
     case file:read_line(standard_io) of
         eof ->
-            io:format("~nGoodbye!~n"),
+            io:format("~n~s~n", [coding_agent_ansi:bright_cyan("Goodbye!")]),
             save_history(History),
             ok;
         {error, Reason} ->
-            io:format("Input error: ~p~n", [Reason]),
+            io:format("~ts ~p~n", [coding_agent_ansi:bright_red("Input error:"), Reason]),
             save_history(History),
             ok;
         {ok, Line} ->
@@ -183,7 +184,7 @@ process_input(SessionId, History, Input, Mode) ->
         Result -> Result
     catch
         Type:Error:Stacktrace ->
-            io:format("~n** Command crashed: ~p:~p~n", [Type, Error]),
+            io:format("~n~s ~p:~p~n", [coding_agent_ansi:bright_red("** Command crashed:"), Type, Error]),
             report_crash(Type, Error, Stacktrace, SessionId),
             io:format("~n"),
             {continue, History, Mode}
@@ -208,41 +209,41 @@ process_input_impl(SessionId, History, Input, Mode) ->
     process_input_impl(SessionId, History, io_lib:format("~s", [Input]), Mode).
 
 process_command(SessionId, History, "help" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("~nCommands:~n"),
-    io:format("  /help           - Show this help~n"),
-    io:format("  /status         - Show session & memory status~n"),
-    io:format("  /history        - Show conversation history~n"),
-    io:format("  /tools          - List available tools~n"),
-    io:format("  /models         - List available Ollama models~n"),
-    io:format("  /model <name>   - Show model details~n"),
-    io:format("  /switch <model> - Switch to a different model~n"),
-    io:format("  /context [size] - Show/set max context size~n"),
-    io:format("  /modules        - List agent modules~n"),
-    io:format("  /reload [mod]  - Hot reload module (all if no arg)~n"),
-    io:format("  /checkpoint     - Create checkpoint~n"),
-    io:format("  /restore <id>  - Restore from checkpoint~n"),
-    io:format("  /compact        - Compact session (summarize and archive old context)~n"),
-    io:format("  /sessions       - List saved sessions~n"),
-    io:format("  /load <id>      - Load a saved session~n"),
-    io:format("  /save           - Save current session~n"),
-    io:format("  /clear          - Clear session history~n"),
-    io:format("  /trim           - Force memory cleanup~n"),
-    io:format("  /cancel         - Cancel in-progress operation~n"),
-    io:format("  /crashes        - Show recent crashes~n"),
-    io:format("  /reports        - List crash/fix reports~n"),
-    io:format("  /fix <id>       - Attempt auto-fix~n"),
-    io:format("  /dump <file>   - Dump context to file (.md/.json/.txt)~n"),
-    io:format("  /plan           - Enter plan mode (discuss and refine plans)~n"),
-    io:format("  /build          - Exit plan mode, enter build mode (execute)~n"),
-    io:format("  /showplan       - Show current plan~n"),
-    io:format("  /editplan       - Edit plan in external editor~n"),
-    io:format("  /clearplan      - Clear current plan~n"),
-    io:format("  /quit, /exit    - Exit REPL~n"),
-    io:format("~nCurrent mode: ~s~n", [get_mode_indicator(Mode)]),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Commands:")]),
+    io:format("  " ++ coding_agent_ansi:bright_white("/help") ++ coding_agent_ansi:dim("           - Show this help") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/status") ++ coding_agent_ansi:dim("         - Show session & memory status") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/history") ++ coding_agent_ansi:dim("        - Show conversation history") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/tools") ++ coding_agent_ansi:dim("          - List available tools") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/models") ++ coding_agent_ansi:dim("         - List available Ollama models") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/model <name>") ++ coding_agent_ansi:dim("   - Show model details") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/switch <model>") ++ coding_agent_ansi:dim(" - Switch to a different model") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/context [size]") ++ coding_agent_ansi:dim(" - Show/set max context size") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/modules") ++ coding_agent_ansi:dim("        - List agent modules") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/reload [mod]") ++ coding_agent_ansi:dim("  - Hot reload module (all if no arg)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/checkpoint") ++ coding_agent_ansi:dim("     - Create checkpoint") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/restore <id>") ++ coding_agent_ansi:dim("  - Restore from checkpoint") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/compact") ++ coding_agent_ansi:dim("        - Compact session (summarize and archive old context)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/sessions") ++ coding_agent_ansi:dim("       - List saved sessions") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/load <id>") ++ coding_agent_ansi:dim("      - Load a saved session") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/save") ++ coding_agent_ansi:dim("           - Save current session") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/clear") ++ coding_agent_ansi:dim("          - Clear session history") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/trim") ++ coding_agent_ansi:dim("           - Force memory cleanup") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/cancel") ++ coding_agent_ansi:dim("         - Cancel in-progress operation") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/crashes") ++ coding_agent_ansi:dim("        - Show recent crashes") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/reports") ++ coding_agent_ansi:dim("        - List crash/fix reports") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/fix <id>") ++ coding_agent_ansi:dim("       - Attempt auto-fix") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/dump <file>") ++ coding_agent_ansi:dim("   - Dump context to file (.md/.json/.txt)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/plan") ++ coding_agent_ansi:dim("           - Enter plan mode (discuss and refine plans)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/build") ++ coding_agent_ansi:dim("          - Exit plan mode, enter build mode (execute)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/showplan") ++ coding_agent_ansi:dim("       - Show current plan") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/editplan") ++ coding_agent_ansi:dim("       - Edit plan in external editor") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/clearplan") ++ coding_agent_ansi:dim("      - Clear current plan") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/quit, /exit") ++ coding_agent_ansi:dim("    - Exit REPL") ++ "~n"),
+    io:format("~n" ++ coding_agent_ansi:bright_yellow("Current mode:") ++ " ~s~n", [get_mode_indicator(Mode)]),
     {continue, History, Mode};
     
 process_command(SessionId, History, "status" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("~nSession Status:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Session Status:")]),
     try coding_agent_session:stats(SessionId) of
         {ok, Stats} ->
             %% Session token stats
@@ -270,25 +271,25 @@ process_command(SessionId, History, "status" ++ Rest, Mode) when Rest =:= []; hd
             GlobalPrompt = maps:get(<<"global_prompt_tokens">>, Stats, 0),
             GlobalCompletion = maps:get(<<"global_completion_tokens">>, Stats, 0),
             GlobalEstimated = maps:get(<<"global_estimated_tokens">>, Stats, 0),
-            io:format("~nGlobal Token Stats:~n"),
+            io:format("~ts~n", [coding_agent_ansi:bright_yellow("Global Token Stats:")]),
             io:format("    Total Prompt:     ~p~n", [GlobalPrompt]),
             io:format("    Total Completion: ~p~n", [GlobalCompletion]),
             io:format("    Total Estimated:  ~p~n", [GlobalEstimated]);
         {error, _} ->
-            io:format("  (session error)~n")
+            io:format(coding_agent_ansi:dim("  (session error)") ++ "~n")
     catch _:_ ->
-        io:format("  (session not available)~n")
+        io:format(coding_agent_ansi:dim("  (session not available)") ++ "~n")
     end,
-    io:format("~nMemory Status:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Memory Status:")]),
     try coding_agent_process_monitor:status() of
         {ok, MemStatus} ->
             io:format("  Total: ~p KB~n", [maps:get(total_memory, MemStatus) div 1024]),
             io:format("  Processes: ~p~n", [maps:get(process_count, MemStatus)]),
             io:format("  ETS tables: ~p~n", [length(ets:all())]);
         _ ->
-            io:format("  (memory manager not available)~n")
+            io:format(coding_agent_ansi:dim("  (memory manager not available)") ++ "~n")
     catch _:_ ->
-        io:format("  (memory manager not available)~n")
+        io:format(coding_agent_ansi:dim("  (memory manager not available)") ++ "~n")
     end,
     Ckpts = try coding_agent_self:list_checkpoints() of
         L when is_list(L) -> L;
@@ -312,7 +313,7 @@ process_command(SessionId, History, "status" ++ Rest, Mode) when Rest =:= []; hd
     
 process_command(SessionId, History, "history" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     {ok, Messages} = coding_agent_session:history(SessionId),
-    io:format("~nConversation History:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Conversation History:")]),
     lists:foreach(fun(Msg) ->
         Role = maps:get(<<"role">>, Msg, <<"unknown">>),
         Content = maps:get(<<"content">>, Msg, <<"">>),
@@ -327,7 +328,7 @@ process_command(SessionId, History, "history" ++ Rest, Mode) when Rest =:= []; h
     
 process_command(SessionId, History, "tools" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     Tools = coding_agent_tools:tools(),
-    io:format("~nAvailable Tools (~p):~n", [length(Tools)]),
+    io:format("~s (~p):~n", [coding_agent_ansi:bright_yellow("Available Tools"), length(Tools)]),
     lists:foreach(fun(Tool) ->
         Name = maps:get(<<"name">>, maps:get(<<"function">>, Tool, #{}), <<"unknown">>),
         io:format("  - ~s~n", [Name])
@@ -338,14 +339,14 @@ process_command(SessionId, History, "tools" ++ Rest, Mode) when Rest =:= []; hd(
 process_command(SessionId, History, "cancel", Mode) ->
     case coding_agent_request_registry:halt(SessionId) of
         ok ->
-            io:format("~n✓ Request cancelled.~n~n");
+            io:format("~n" ++ coding_agent_ansi:bright_green("✓ Request cancelled.") ++ "~n~n");
         {error, not_found} ->
-            io:format("~nNo active request to cancel.~n~n")
+            io:format("~n" ++ coding_agent_ansi:dim("No active request to cancel.") ++ "~n~n")
     end,
     {continue, History, Mode};
 
 process_command(_SessionId, History, "models" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("~nAvailable Ollama Models:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Available Ollama Models:")]),
     case coding_agent_ollama:list_models() of
         {ok, Models} when is_list(Models) ->
             CurrentModel = get_model(),
@@ -359,13 +360,13 @@ process_command(_SessionId, History, "models" ++ Rest, Mode) when Rest =:= []; h
             end, Models),
             io:format("~n~p model(s) found.~n~n", [length(Models)]);
         {error, Reason} ->
-            io:format("  Error listing models: ~p~n~n", [Reason])
+            io:format("  " ++ coding_agent_ansi:bright_red("Error listing models:") ++ " ~p~n~n", [Reason])
     end,
     {continue, History, Mode};
 
 process_command(_SessionId, History, "model " ++ ModelName, Mode) ->
     Name = safe_trim(ModelName),
-    io:format("~nModel Details for: ~s~n", [Name]),
+    io:format("~ts ~ts~n", [coding_agent_ansi:bright_yellow("Model Details for:"), coding_agent_ansi:bright_green(Name)]),
     case coding_agent_ollama:show_model(Name, #{}) of
         {ok, ModelInfo} ->
             % Print all top-level fields
@@ -427,16 +428,16 @@ process_command(_SessionId, History, "model " ++ ModelName, Mode) ->
             io:format("~n"),
             {continue, History, Mode};
         {error, Reason} ->
-            io:format("  Error getting model info: ~p~n~n", [Reason]),
+            io:format("  " ++ coding_agent_ansi:bright_red("Error getting model info:") ++ " ~p~n~n", [Reason]),
             {continue, History, Mode}
     end;
 
 process_command(SessionId, History, "switch " ++ ModelName, Mode) ->
     Name = safe_trim(ModelName),
-    io:format("Switching to model: ~s...~n", [Name]),
+    io:format(coding_agent_ansi:dim("Switching to model:") ++ " ~s...~n", [Name]),
     case coding_agent_ollama:switch_model(Name) of
         {ok, OldModel, NewModel} ->
-            io:format("✓ Switched from ~s to ~s~n~n", [OldModel, NewModel]),
+            io:format(coding_agent_ansi:bright_green("✓ Switched from") ++ " ~s " ++ coding_agent_ansi:bright_green("to") ++ " ~s~n~n", [OldModel, NewModel]),
             io:format("Session cleared (new model context).~n~n");
         {error, Reason} ->
             io:format("✗ Failed to switch model: ~p~n~n", [Reason])
@@ -445,7 +446,7 @@ process_command(SessionId, History, "switch " ++ ModelName, Mode) ->
 
 process_command(SessionId, History, "context", Mode) ->
     % Show current context size (no arguments)
-    io:format("~nContext Size:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Context Size:")]),
     try coding_agent_session:get_context_length(SessionId) of
         {ok, #{context_length := CtxLen, current_tokens := CurrentTokens, usage_percent := UsagePct}} ->
             io:format("  Max Context:    ~p tokens~n", [CtxLen]),
@@ -454,24 +455,24 @@ process_command(SessionId, History, "context", Mode) ->
             io:format("~n"),
             io:format("  Usage: /context <size>  - Set new max context size~n~n");
         {error, Reason} ->
-            io:format("  Error: ~p~n~n", [Reason])
+            io:format("  " ++ coding_agent_ansi:bright_red("Error:") ++ " ~p~n~n", [Reason])
     catch _:Error ->
-        io:format("  Error: ~p~n~n", [Error])
+        io:format("  " ++ coding_agent_ansi:bright_red("Error:") ++ " ~p~n~n", [Error])
     end,
     {continue, History, Mode};
 process_command(SessionId, History, "context " ++ SizeStr, Mode) ->
     % Set context size
     case string:to_integer(safe_trim(SizeStr)) of
         {Size, []} when Size > 0 ->
-            io:format("Setting context size to ~p tokens...~n", [Size]),
+            io:format(coding_agent_ansi:dim("Setting context size to") ++ " ~p tokens...~n", [Size]),
             case coding_agent_session:set_context_length(SessionId, Size) of
                 {ok, #{old_length := OldLen, new_length := NewLen}} ->
-                    io:format("✓ Context size changed: ~p -> ~p tokens~n~n", [OldLen, NewLen]);
+                    io:format(coding_agent_ansi:bright_green("✓ Context size changed:") ++ " ~p -> ~p tokens~n~n", [OldLen, NewLen]);
                 {error, Reason} ->
-                    io:format("✗ Failed to set context size: ~p~n~n", [Reason])
+                    io:format(coding_agent_ansi:bright_red("✗ Failed to set context size:") ++ " ~p~n~n", [Reason])
             end;
         _ ->
-            io:format("✗ Invalid size: '~s'. Must be a positive integer.~n~n", [safe_trim(SizeStr)])
+            io:format(coding_agent_ansi:bright_red("✗ Invalid size:") ++ " '~s'. Must be a positive integer.~n~n", [safe_trim(SizeStr)])
     end,
     {continue, History, Mode};
     
@@ -482,7 +483,7 @@ process_command(SessionId, History, "modules" ++ Rest, Mode) when Rest =:= []; h
         _ -> []
     catch _:_ -> []
     end,
-    io:format("~nAgent Modules:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Agent Modules:")]),
     lists:foreach(fun(M) ->
         Name = maps:get(name, M),
         Loaded = maps:get(loaded, M, false),
@@ -496,26 +497,26 @@ process_command(SessionId, History, "modules" ++ Rest, Mode) when Rest =:= []; h
 process_command(SessionId, History, "reload" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     case safe_trim(Rest) of
         "" ->
-            io:format("Reloading all modules...~n"),
+            io:format(coding_agent_ansi:dim("Reloading all modules...") ++ "~n"),
             try coding_agent_self:reload_all() of
                 Results when is_list(Results) ->
                     Successes = [M || {M, #{success := true}} <- Results],
                     Failures = [{M, E} || {M, #{success := false, error := E}} <- Results],
-                    io:format("✓ Reloaded ~p modules successfully~n", [length(Successes)]),
+                    io:format(coding_agent_ansi:bright_green("✓ Reloaded") ++ " ~p modules successfully~n", [length(Successes)]),
                     case Failures of
                         [] -> ok;
                         _ ->
-                            io:format("✗ Failed to reload ~p modules:~n", [length(Failures)]),
+                            io:format(coding_agent_ansi:bright_red("✗ Failed to reload") ++ " ~p modules:~n", [length(Failures)]),
                             lists:foreach(fun({M, E}) ->
                                 io:format("    ~p: ~s~n", [M, E])
                             end, Failures)
                     end,
                     io:format("~n");
                 Other ->
-                    io:format("✗ Unexpected result: ~p~n~n", [Other])
+                    io:format(coding_agent_ansi:bright_red("✗ Unexpected result:") ++ " ~p~n~n", [Other])
             catch
                 Type:Error:Stack ->
-                    io:format("✗ Reload all crashed: ~p:~p~n", [Type, Error]),
+                    io:format(coding_agent_ansi:bright_red("✗ Reload all crashed:") ++ " ~p:~p~n", [Type, Error]),
                     report_crash(Type, Error, Stack),
                     {continue, History, Mode}
             end,
@@ -523,22 +524,22 @@ process_command(SessionId, History, "reload" ++ Rest, Mode) when Rest =:= []; hd
         ModuleName ->
             ModAtom = try list_to_existing_atom(ModuleName)
             catch error:badarg -> 
-                io:format("Error: Unknown module ~p~n", [ModuleName]),
+                io:format(coding_agent_ansi:bright_red("Error:") ++ " Unknown module ~p~n", [ModuleName]),
                 {continue, History, Mode}
             end,
             case ModAtom of
                 _ when is_atom(ModAtom) ->
-                    io:format("Reloading ~p...~n", [ModAtom]),
+                    io:format(coding_agent_ansi:dim("Reloading") ++ " ~p...~n", [ModAtom]),
                     try coding_agent_self:reload_module(ModAtom) of
                         #{success := true} ->
-                            io:format("✓ Module ~p reloaded successfully~n~n", [ModAtom]);
+                            io:format(coding_agent_ansi:bright_green("✓ Module") ++ " ~p reloaded successfully~n~n", [ModAtom]);
                         #{success := false, error := Error} ->
-                            io:format("✗ Failed to reload: ~s~n~n", [Error]);
+                            io:format(coding_agent_ansi:bright_red("✗ Failed to reload:") ++ " ~s~n~n", [Error]);
                         Other ->
-                            io:format("✗ Unexpected result: ~p~n~n", [Other])
+                            io:format(coding_agent_ansi:bright_red("✗ Unexpected result:") ++ " ~p~n~n", [Other])
                     catch
                         Type:Error:Stack ->
-                            io:format("✗ Reload crashed: ~p:~p~n", [Type, Error]),
+                            io:format(coding_agent_ansi:bright_red("✗ Reload crashed:") ++ " ~p:~p~n", [Type, Error]),
                             report_crash(Type, Error, Stack),
                             {continue, History, Mode}
                     end,
@@ -551,9 +552,9 @@ process_command(SessionId, History, "reload" ++ Rest, Mode) when Rest =:= []; hd
 process_command(SessionId, History, "checkpoint" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     case coding_agent_self:create_checkpoint() of
         #{success := true, id := Id} ->
-            io:format("✓ Checkpoint created: ~s~n~n", [Id]);
+            io:format(coding_agent_ansi:bright_green("✓ Checkpoint created:") ++ " ~s~n~n", [Id]);
         #{success := false, error := Error} ->
-            io:format("✗ Failed: ~s~n~n", [Error])
+            io:format(coding_agent_ansi:bright_red("✗ Failed:") ++ " ~s~n~n", [Error])
     end,
     {continue, History, Mode};
     
@@ -561,49 +562,49 @@ process_command(SessionId, History, "restore " ++ CkptId, Mode) ->
     Id = list_to_binary(safe_trim(CkptId)),
     case coding_agent_self:restore_checkpoint(Id) of
         #{success := true} ->
-            io:format("✓ Restored from checkpoint ~s~n~n", [Id]);
+            io:format(coding_agent_ansi:bright_green("✓ Restored from checkpoint") ++ " ~s~n~n", [Id]);
         #{success := false, error := Error} ->
-            io:format("✗ Failed: ~s~n~n", [Error])
+            io:format(coding_agent_ansi:bright_red("✗ Failed:") ++ " ~s~n~n", [Error])
     end,
     {continue, History, Mode};
     
 process_command(SessionId, History, "clear" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
     try coding_agent_session:clear(SessionId) of
-        _ -> io:format("✓ Session history cleared~n~n")
+        _ -> io:format(coding_agent_ansi:bright_green("✓ Session history cleared") ++ "~n~n")
     catch _:_ ->
-        io:format("✗ Failed to clear session~n~n")
+        io:format(coding_agent_ansi:bright_red("✗ Failed to clear session") ++ "~n~n")
     end,
     {continue, History, Mode};
     
 process_command(SessionId, History, "trim" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("Trimming memory...~n"),
+    io:format(coding_agent_ansi:dim("Trimming memory...") ++ "~n"),
     try coding_agent_process_monitor:trim() of
         _ -> ok
     catch _:_ ->
-        io:format("Warning: memory trim failed~n")
+        io:format(coding_agent_ansi:bright_yellow("Warning:") ++ " memory trim failed~n")
     end,
     try coding_agent_process_monitor:status() of
         {ok, MemStatus} ->
-            io:format("✓ Memory trimmed. Current: ~p KB~n~n", [maps:get(total_memory, MemStatus) div 1024]);
+            io:format(coding_agent_ansi:bright_green("✓ Memory trimmed.") ++ " Current: ~p KB~n~n", [maps:get(total_memory, MemStatus) div 1024]);
         _ ->
-            io:format("✓ Memory trimmed~n~n")
+            io:format(coding_agent_ansi:bright_green("✓ Memory trimmed") ++ "~n~n")
     catch _:_ ->
-        io:format("✓ Memory trimmed~n~n")
+        io:format(coding_agent_ansi:bright_green("✓ Memory trimmed") ++ "~n~n")
     end,
     {continue, History, Mode};
 
 process_command(SessionId, History, "compact" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("Compacting session...~n"),
+    io:format(coding_agent_ansi:dim("Compacting session...") ++ "~n"),
     try coding_agent_session:compact(SessionId) of
         {ok, #{archived_as := ArchiveId, summary_size := SummarySize}} ->
-            io:format("✓ Session compacted.~n"),
-            io:format("  Archived as: ~s~n", [ArchiveId]),
-            io:format("  Summary size: ~p bytes~n~n", [SummarySize]);
+            io:format(coding_agent_ansi:bright_green("✓ Session compacted.") ++ "~n"),
+            io:format("  " ++ coding_agent_ansi:bright_white("Archived as:") ++ " ~s~n", [ArchiveId]),
+            io:format("  " ++ coding_agent_ansi:bright_white("Summary size:") ++ " ~p bytes~n~n", [SummarySize]);
         {error, Reason} ->
-            io:format("✗ Compaction failed: ~p~n~n", [Reason])
+            io:format(coding_agent_ansi:bright_red("✗ Compaction failed:") ++ " ~p~n~n", [Reason])
     catch
         Type:Error ->
-            io:format("✗ Compaction crashed: ~p:~p~n~n", [Type, Error])
+            io:format(coding_agent_ansi:bright_red("✗ Compaction crashed:") ++ " ~p:~p~n~n", [Type, Error])
     end,
     {continue, History, Mode};
 
@@ -614,7 +615,7 @@ process_command(SessionId, History, "crashes" ++ Rest, Mode) when Rest =:= []; h
         _ -> []
     catch _:_ -> []
     end,
-    io:format("~nRecent Crashes:~n"),
+    io:format("~ts~n", [coding_agent_ansi:bright_yellow("Recent Crashes:")]),
     lists:foreach(fun({Id, Data}) ->
         Type = maps:get(type, Data, unknown),
         Time = maps:get(timestamp, Data, 0),
@@ -781,12 +782,12 @@ process_command(SessionId, History, "showplan" ++ Rest, Mode) when Rest =:= []; 
     io:format("~n"),
     case byte_size(CurrentPlan) of
         0 ->
-            io:format("No plan has been created yet.~n"),
-            io:format("Use /plan to enter plan mode and create a plan.~n~n");
+            io:format(coding_agent_ansi:dim("No plan has been created yet.") ++ "~n"),
+            io:format(coding_agent_ansi:dim("Use /plan to enter plan mode and create a plan.") ++ "~n~n");
         _ ->
-            io:format("═══════════════════════════════════════════════════════════════~n"),
-            io:format("                        CURRENT PLAN~n"),
-            io:format("═══════════════════════════════════════════════════════════════~n"),
+            io:format("~ts~n", [coding_agent_ansi:bright_cyan("═══════════════════════════════════════════════════════════════")]),
+            io:format("~s~n", [coding_agent_ansi:bold(coding_agent_ansi:bright_yellow("                        CURRENT PLAN"))]),
+            io:format("~ts~n", [coding_agent_ansi:bright_cyan("═══════════════════════════════════════════════════════════════")]),
             io:format("~s~n", [CurrentPlan]),
             io:format("═══════════════════════════════════════════════════════════════~n~n")
     end,
@@ -801,8 +802,8 @@ process_command(SessionId, History, "editplan" ++ Rest, Mode) when Rest =:= []; 
     % Get editor from environment
     Editor = os:getenv("EDITOR", "nano"),
     
-    io:format("~nOpening plan editor (~s)...~n", [Editor]),
-    io:format("Save and exit when done.~n~n"),
+    io:format("~n" ++ coding_agent_ansi:dim("Opening plan editor") ++ " (~s)...~n", [Editor]),
+    io:format(coding_agent_ansi:dim("Save and exit when done.") ++ "~n~n"),
     
     % Run the editor
     Port = open_port({spawn, Editor ++ " " ++ TempFile}, [stream, eof]),
@@ -813,7 +814,7 @@ process_command(SessionId, History, "editplan" ++ Rest, Mode) when Rest =:= []; 
         {ok, NewPlan} ->
             set_current_plan(NewPlan),
             io:format("~n✓ Plan updated.~n"),
-            io:format("Use /showplan to view it.~n~n");
+            io:format(coding_agent_ansi:dim("Use /showplan to view it.") ++ "~n~n");
         {error, Reason} ->
             io:format("~n✗ Failed to read plan: ~p~n~n", [Reason])
     end,
@@ -826,7 +827,7 @@ process_command(SessionId, History, "clearplan" ++ Rest, Mode) when Rest =:= [];
 
 
 process_command(SessionId, History, Unknown, Mode) ->
-    io:format("Unknown command: /~s~nType /help for available commands.~n~n", [Unknown]),
+    io:format("~ts /~s~n~ts~n~n", [coding_agent_ansi:bright_red("Unknown command:"), Unknown, coding_agent_ansi:dim("Type /help for available commands.")]),
     {continue, History, Mode}.
 
 wait_for_editor(Port) ->
@@ -848,7 +849,7 @@ process_message(SessionId, History, Input, Mode) ->
     process_message(SessionId, History, Input, Mode, 0).
 
 process_message(SessionId, History, Input, Mode, RetryCount) when RetryCount >= 3 ->
-    io:format("~nMax retries exceeded. Please try again.~n"),
+    io:format("~n" ++ coding_agent_ansi:bright_red("Max retries exceeded. Please try again.") ++ "~n"),
     {continue, History, Mode};
 process_message(SessionId, History, Input, Mode, RetryCount) ->
     Message = list_to_binary(Input),
@@ -888,17 +889,17 @@ process_message(SessionId, History, Input, Mode, RetryCount) ->
     
     EnrichedMessage = iolist_to_binary([ModeContext, Message]),
     
-    io:format("~nThinking...~n"),
+    io:format("~s~n", [coding_agent_ansi:dim("Thinking...")]),
     try coding_agent_session:ask(SessionId, EnrichedMessage) of
         {ok, Response, _Thinking, _History} ->
-            io:format("~n--- Response ---~n"),
+            io:format("~ts~n", [coding_agent_ansi:bright_cyan("--- Response ---")]),
             print_response(Response),
             io:format("~n"),
             {continue, NewHistory, Mode};
         {error, session_not_found} ->
-            io:format("~nSession expired. Creating new session...~n"),
+            io:format("~n" ++ coding_agent_ansi:bright_yellow("Session expired. Creating new session...") ++ "~n"),
             {ok, {NewSessionId, _}} = coding_agent_session:new(),
-            io:format("New session: ~s~n~n", [NewSessionId]),
+            io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId)]),
             process_message(NewSessionId, NewHistory, Input, Mode, 0);
         {error, max_retries_exceeded} ->
             io:format("~n✗ Max retries exceeded. The request failed multiple times.~n"),
@@ -908,41 +909,41 @@ process_message(SessionId, History, Input, Mode, RetryCount) ->
             io:format("  - Network issue to Ollama/cloud~n~n"),
             {continue, History, Mode};
         {error, {http_error, Status, Body}} ->
-            io:format("~n✗ HTTP Error ~p: ~s~n~n", [Status, binary:part(Body, 0, min(200, byte_size(Body)))]),
+            io:format("~n" ++ coding_agent_ansi:bright_red("✗ HTTP Error") ++ " ~p: ~s~n~n", [Status, binary:part(Body, 0, min(200, byte_size(Body)))]),
             {continue, History, Mode};
         {error, Reason} ->
-            io:format("~n✗ Error: ~p~n~n", [Reason]),
+            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Error:") ++ " ~p~n~n", [Reason]),
             report_error(Reason, SessionId),
             {continue, History, Mode}
     catch
         exit:{timeout, {gen_server,call,[Pid, Call, Timeout]}} ->
-            io:format("~n✗ Request timed out after ~pms~n", [Timeout]),
+            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Request timed out") ++ " after ~pms~n", [Timeout]),
             io:format("  Called: ~p~n", [element(1, Call)]),
             io:format("  Retrying (~p/3)...~n~n", [RetryCount + 1]),
             timer:sleep(1000 * (RetryCount + 1)),
             process_message(SessionId, History, Input, Mode, RetryCount + 1);
         exit:{timeout, _} ->
-            io:format("~n✗ Request timed out (gen_server call)~n"),
+            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Request timed out (gen_server call)") ++ "~n"),
             io:format("  This usually means the model is processing slowly or context is too long.~n"),
             io:format("  Retrying (~p/3)...~n~n", [RetryCount + 1]),
             timer:sleep(1000 * (RetryCount + 1)),
             process_message(SessionId, History, Input, Mode, RetryCount + 1);
         error:undef:Stacktrace ->
-            io:format("~n⚠ Undefined function error:~n"),
+            io:format("~n" ++ coding_agent_ansi:bright_yellow("⚠ Undefined function error:") ++ "~n"),
             lists:foreach(fun({M, F, A, Loc}) ->
                 io:format("  ~p:~p/~p at ~p~n", [M, F, A, Loc])
             end, Stacktrace),
-            io:format("~nPlease recompile and restart.~n"),
+            io:format("~n" ++ coding_agent_ansi:bright_yellow("Please recompile and restart.") ++ "~n"),
             {continue, History, Mode};
         Type:Error:Stacktrace ->
-            io:format("~n⚠ Session crashed: ~p:~p~n", [Type, Error]),
+            io:format("~n" ++ coding_agent_ansi:bright_yellow("⚠ Session crashed:") ++ " ~p:~p~n", [Type, Error]),
             report_crash(Type, Error, Stacktrace, SessionId),
-            io:format("Creating new session and continuing...~n"),
+            io:format(coding_agent_ansi:bright_yellow("Creating new session and continuing...") ++ "~n"),
             try ets:delete(coding_agent_sessions, SessionId)
             catch _:_ -> ok
             end,
             {ok, {NewSessionId, _}} = coding_agent_session:new(),
-            io:format("New session: ~s~n~n", [NewSessionId]),
+            io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId)]),
             {new_session, NewSessionId, NewHistory, Mode}
     end.
 
@@ -961,7 +962,7 @@ report_error(Reason, SessionId) ->
     % Don't log HTTP/API errors to crash report - they're handled by retry
     case is_http_error(Reason) of
         true ->
-            io:format("(API error, will retry automatically)~n");
+            io:format(coding_agent_ansi:dim("(API error, will retry automatically)") ++ "~n");
         false ->
             io:format("Error: ~p~n", [Reason]),
             case whereis(coding_agent_healer) of
@@ -969,7 +970,7 @@ report_error(Reason, SessionId) ->
                 _ ->
                     Stacktrace = try throw(fake) catch _:_:St -> St end,
                     coding_agent_healer:report_crash(repl_error, Reason, Stacktrace, #{session_id => SessionId}),
-                    io:format("Error logged.~n")
+                    io:format(coding_agent_ansi:dim("Error logged.") ++ "~n")
             end
     end.
 
@@ -991,8 +992,8 @@ report_crash(Type, Error, Stacktrace, SessionId) ->
     Filename = filename:join(CrashDir, binary_to_list(CrashId) ++ ".md"),
     
     case file:write_file(Filename, CrashReportContent) of
-        ok -> io:format("Crash report saved: ~s~n", [Filename]);
-        _ -> io:format("Failed to write crash report~n")
+        ok -> io:format(coding_agent_ansi:bright_green("Crash report saved:") ++ " ~s~n", [Filename]);
+        _ -> io:format(coding_agent_ansi:bright_red("Failed to write crash report") ++ "~n")
     end,
     
     %% Try healer if available
@@ -1003,7 +1004,7 @@ report_crash(Type, Error, Stacktrace, SessionId) ->
                 analyze_and_suggest_fix(Error, Stacktrace);
             _ ->
                 coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace, #{session_id => SessionId}),
-                io:format("Crash logged to healer.~n"),
+                io:format(coding_agent_ansi:dim("Crash logged to healer.") ++ "~n"),
                 {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
                 display_suggestion(CrashAnalysis)
         end
@@ -1065,8 +1066,8 @@ format_stacktrace([_ | Rest]) ->
 
 analyze_and_suggest_fix(Error, Stacktrace) ->
     %% Show the error clearly
-    io:format("~n** Error: ~p~n", [Error]),
-    io:format("~n** Stacktrace:~n"),
+    io:format("~n" ++ coding_agent_ansi:bright_red("** Error:") ++ " ~p~n", [Error]),
+    io:format("~n" ++ coding_agent_ansi:bright_yellow("** Stacktrace:") ++ "~n"),
     lists:foreach(fun
         ({M, F, A, Info}) ->
             File = proplists:get_value(file, Info, "unknown"),
@@ -1086,20 +1087,20 @@ analyze_and_suggest_fix(Error, Stacktrace) ->
             %% Check if function exists in another module
             case find_function_in_modules(Mod, Fun, Arity) of
                 {ok, CorrectMod} ->
-                    io:format("~n** SUGGESTED FIX:** Use ~p:~p/~p instead of ~p:~p/~p~n~n",
+                    io:format("~n" ++ coding_agent_ansi:bright_green("** SUGGESTED FIX:** Use") ++ " ~p:~p/~p instead of ~p:~p/~p~n~n",
                               [CorrectMod, Fun, Arity, Mod, Fun, Arity]);
                 not_found ->
-                    io:format("~n** SUGGESTED FIX:** Function ~p:~p/~p not found. Add -export or define it.~n~n",
+                    io:format("~n" ++ coding_agent_ansi:bright_green("** SUGGESTED FIX:** Function") ++ " ~p:~p/~p not found. Add -export or define it.~n~n",
                               [Mod, Fun, Arity])
             end;
         {badarg, _} ->
-            io:format("~n** SUGGESTED FIX:** Bad argument. Check function arguments.~n~n", []);
+            io:format("~n" ++ coding_agent_ansi:bright_green("** SUGGESTED FIX:** Bad argument. Check function arguments.") ++ "~n~n", []);
         {badmatch, _} ->
-            io:format("~n** SUGGESTED FIX:** Pattern match failed. Check data structure.~n~n", []);
+            io:format("~n" ++ coding_agent_ansi:bright_green("** SUGGESTED FIX:** Pattern match failed. Check data structure.") ++ "~n~n", []);
         {case_clause, _} ->
-            io:format("~n** SUGGESTED FIX:** No case clause matched. Add missing case.~n~n", []);
+            io:format("~n" ++ coding_agent_ansi:bright_green("** SUGGESTED FIX:** No case clause matched. Add missing case.") ++ "~n~n", []);
         _ ->
-            io:format("~n** Run /fix or /crashes for more details**~n~n", [])
+            io:format("~n" ++ coding_agent_ansi:bright_green("** Run /fix or /crashes for more details**") ++ "~n~n", [])
     end.
 
 find_function_in_modules(_WrongMod, Fun, Arity) ->
@@ -1116,7 +1117,7 @@ find_function_in_modules(_WrongMod, Fun, Arity) ->
 
 display_suggestion(CrashAnalysis) ->
     case maps:get(suggested_fix, CrashAnalysis, #{}) of
-        #{hint := Hint} -> io:format("Suggestion: ~s~n", [Hint]);
+        #{hint := Hint} -> io:format(coding_agent_ansi:bright_cyan("Suggestion:") ++ " ~s~n", [Hint]);
         _ -> ok
     end.
 
@@ -1124,7 +1125,7 @@ report_error(Reason) ->
     % Don't log HTTP/API errors to crash report - they're handled by retry
     case is_http_error(Reason) of
         true ->
-            io:format("(API error, will retry automatically)~n");
+            io:format(coding_agent_ansi:dim("(API error, will retry automatically)") ++ "~n");
         false ->
             io:format("Error: ~p~n", [Reason]),
             case whereis(coding_agent_healer) of
@@ -1132,7 +1133,7 @@ report_error(Reason) ->
                 _ ->
                     Stacktrace = try throw(fake) catch _:_:St -> St end,
                     coding_agent_healer:report_crash(repl_error, Reason, Stacktrace),
-                    io:format("Error logged.~n")
+                    io:format(coding_agent_ansi:dim("Error logged.") ++ "~n")
             end
     end.
 
@@ -1147,10 +1148,10 @@ report_crash(Type, Error, Stacktrace) ->
         undefined -> ok;
         _ ->
             coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace),
-            io:format("Crash logged.~n"),
+            io:format(coding_agent_ansi:dim("Crash logged.") ++ "~n"),
             {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
             case maps:get(suggested_fix, CrashAnalysis, #{}) of
-                #{hint := Hint} -> io:format("Suggestion: ~s~n", [Hint]);
+                #{hint := Hint} -> io:format(coding_agent_ansi:bright_cyan("Suggestion:") ++ " ~s~n", [Hint]);
                 _ -> ok
             end
     end.
@@ -1166,7 +1167,7 @@ dump_context(SessionId, History, Filename, Format0) ->
         _ -> text
     end,
     
-    io:format("Dumping context to ~s...~n", [Filename]),
+    io:format(coding_agent_ansi:dim("Dumping context to") ++ " ~s...~n", [Filename]),
     
     Context = gather_context(SessionId, History),
     
@@ -1178,9 +1179,9 @@ dump_context(SessionId, History, Filename, Format0) ->
     
     case file:write_file(Filename, Content) of
         ok ->
-            io:format("✓ Context dumped to ~s~n", [Filename]);
+            io:format(coding_agent_ansi:bright_green("✓ Context dumped to") ++ " ~s~n", [Filename]);
         {error, Reason} ->
-            io:format("✗ Failed to write file: ~p~n", [Reason])
+            io:format(coding_agent_ansi:bright_red("✗ Failed to write file:") ++ " ~p~n", [Reason])
     end.
 
 gather_context(SessionId, History) ->
