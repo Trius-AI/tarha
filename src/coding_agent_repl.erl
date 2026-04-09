@@ -856,7 +856,7 @@ process_message(SessionId, History, Input, Mode, RetryCount) ->
     NewHistory = [Input | History],
     
     % Get mode-specific system prompt
-    ModePrompt = get_mode_system_prompt(Mode),
+    ModePrompt = get_mode_prompt(Mode),
     CurrentPlan = get_current_plan(),
     
     % Add mode and plan context to the message
@@ -889,129 +889,69 @@ process_message(SessionId, History, Input, Mode, RetryCount) ->
     
     EnrichedMessage = iolist_to_binary([ModeContext, Message]),
     
-    io:format("~s~n", [coding_agent_ansi:dim("Thinking...")]),
-    try coding_agent_session:ask(SessionId, EnrichedMessage) of
-        {ok, Response, _Thinking, _History} ->
-            io:format("~ts~n", [coding_agent_ansi:bright_cyan("--- Response ---")]),
-            print_response(Response),
-            io:format("~n"),
-            {continue, NewHistory, Mode};
-        {error, session_not_found} ->
-            io:format("~n" ++ coding_agent_ansi:bright_yellow("Session expired. Creating new session...") ++ "~n"),
-            {ok, {NewSessionId, _}} = coding_agent_session:new(),
-            io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId)]),
-            process_message(NewSessionId, NewHistory, Input, Mode, 0);
-        {error, max_retries_exceeded} ->
-            io:format("~n✗ Max retries exceeded. The request failed multiple times.~n"),
-            io:format("  This usually means:~n"),
-            io:format("  - Model is overloaded or slow~n"),
-            io:format("  - Context is too long (use /trim to reduce)~n"),
-            io:format("  - Network issue to Ollama/cloud~n~n"),
-            {continue, History, Mode};
-        {error, {http_error, Status, Body}} ->
-            io:format("~n" ++ coding_agent_ansi:bright_red("✗ HTTP Error") ++ " ~p: ~s~n~n", [Status, binary:part(Body, 0, min(200, byte_size(Body)))]),
-            {continue, History, Mode};
-        {error, Reason} ->
-            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Error:") ++ " ~p~n~n", [Reason]),
-            report_error(Reason, SessionId),
-            {continue, History, Mode}
-    catch
-        exit:{timeout, {gen_server,call,[Pid, Call, Timeout]}} ->
-            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Request timed out") ++ " after ~pms~n", [Timeout]),
-            io:format("  Called: ~p~n", [element(1, Call)]),
-            io:format("  Retrying (~p/3)...~n~n", [RetryCount + 1]),
-            timer:sleep(1000 * (RetryCount + 1)),
-            process_message(SessionId, History, Input, Mode, RetryCount + 1);
-        exit:{timeout, _} ->
-            io:format("~n" ++ coding_agent_ansi:bright_red("✗ Request timed out (gen_server call)") ++ "~n"),
-            io:format("  This usually means the model is processing slowly or context is too long.~n"),
-            io:format("  Retrying (~p/3)...~n~n", [RetryCount + 1]),
-            timer:sleep(1000 * (RetryCount + 1)),
-            process_message(SessionId, History, Input, Mode, RetryCount + 1);
-        error:undef:Stacktrace ->
-            io:format("~n" ++ coding_agent_ansi:bright_yellow("⚠ Undefined function error:") ++ "~n"),
-            lists:foreach(fun({M, F, A, Loc}) ->
-                io:format("  ~p:~p/~p at ~p~n", [M, F, A, Loc])
-            end, Stacktrace),
-            io:format("~n" ++ coding_agent_ansi:bright_yellow("Please recompile and restart.") ++ "~n"),
-            {continue, History, Mode};
-        Type:Error:Stacktrace ->
-            io:format("~n" ++ coding_agent_ansi:bright_yellow("⚠ Session crashed:") ++ " ~p:~p~n", [Type, Error]),
-            report_crash(Type, Error, Stacktrace, SessionId),
-            io:format(coding_agent_ansi:bright_yellow("Creating new session and continuing...") ++ "~n"),
-            try ets:delete(coding_agent_sessions, SessionId)
-            catch _:_ -> ok
-            end,
-            {ok, {NewSessionId, _}} = coding_agent_session:new(),
-            io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId)]),
-            {new_session, NewSessionId, NewHistory, Mode}
-    end.
-
-get_mode_system_prompt(build) ->
-    <<"">>;
-get_mode_system_prompt(plan) ->
-    <<"You are in PLAN MODE. In this mode, you should:
-1. Discuss and refine plans with the user
-2. Think through problems step by step
-3. Create detailed implementation plans
-4. Ask clarifying questions
-5. DO NOT execute any tools that modify files or run code
-6. When the plan is ready, suggest using /build to implement it">>.
-
-report_error(Reason, SessionId) ->
-    % Don't log HTTP/API errors to crash report - they're handled by retry
-    case is_http_error(Reason) of
-        true ->
-            io:format(coding_agent_ansi:dim("(API error, will retry automatically)") ++ "~n");
-        false ->
-            io:format("Error: ~p~n", [Reason]),
-            case whereis(coding_agent_healer) of
-                undefined -> ok;
-                _ ->
-                    Stacktrace = try throw(fake) catch _:_:St -> St end,
-                    coding_agent_healer:report_crash(repl_error, Reason, Stacktrace, #{session_id => SessionId}),
-                    io:format(coding_agent_ansi:dim("Error logged.") ++ "~n")
-            end
-    end.
-
-report_crash(Type, Error, Stacktrace, SessionId) ->
-    %% Always write crash report, even if healer is unavailable
-    CrashInfo = #{
-        type => Type,
-        error => Error,
-        stacktrace => Stacktrace,
-        session_id => SessionId,
-        timestamp => erlang:system_time(millisecond)
-    },
-    
-    %% Write crash report directly to disk
-    CrashReportContent = generate_crash_report_content(CrashInfo),
-    CrashId = generate_crash_id(),
-    CrashDir = ".tarha/reports",
-    filelib:ensure_dir(CrashDir ++ "/"),
-    Filename = filename:join(CrashDir, binary_to_list(CrashId) ++ ".md"),
-    
-    case file:write_file(Filename, CrashReportContent) of
-        ok -> io:format(coding_agent_ansi:bright_green("Crash report saved:") ++ " ~s~n", [Filename]);
-        _ -> io:format(coding_agent_ansi:bright_red("Failed to write crash report") ++ "~n")
-    end,
-    
-    %% Try healer if available
     try
-        case whereis(coding_agent_healer) of
-            undefined -> 
-                %% Healer not available - still analyze locally
-                analyze_and_suggest_fix(Error, Stacktrace);
-            _ ->
-                coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace, #{session_id => SessionId}),
-                io:format(coding_agent_ansi:dim("Crash logged to healer.") ++ "~n"),
-                {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
-                display_suggestion(CrashAnalysis)
+        StreamCb = fun stream_callback/3,
+        case coding_agent_session:ask_stream(SessionId, EnrichedMessage, StreamCb) of
+            {ok, Response, _Thinking} ->
+                io:format("~n"),
+                {continue, NewHistory, Mode};
+            {error, session_not_found} ->
+                io:format("~n~ts~n", [coding_agent_ansi:bright_yellow("Session expired. Creating new session...")]),
+                {ok, {NewSessionId2, _}} = coding_agent_session:new(),
+                io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId2)]),
+                process_message(NewSessionId2, NewHistory, Input, Mode, 0);
+            {error, max_retries_exceeded} ->
+                io:format("~n~ts~n", [coding_agent_ansi:bright_red("Max retries exceeded. The request failed multiple times.")]),
+                io:format("  This usually means:~n"),
+                io:format("  - Model is overloaded or slow~n"),
+                io:format("  - Context is too long (use /trim to reduce)~n"),
+                io:format("  - Network issue to Ollama/cloud~n~n"),
+                {continue, History, Mode};
+            {error, {http_error, Status, Body}} ->
+                io:format("~n~ts ~p: ~ts~n~n", [coding_agent_ansi:bright_red("HTTP Error"), Status, binary:part(Body, 0, min(200, byte_size(Body)))]),
+                {continue, History, Mode};
+            {error, Reason2} ->
+                io:format("~n~ts ~p~n~n", [coding_agent_ansi:bright_red("Error:"), Reason2]),
+                {continue, History, Mode}
         end
     catch
-        _:_ ->
-            %% Healer failed - analyze locally
-            analyze_and_suggest_fix(Error, Stacktrace)
+        exit:{timeout, {gen_server, call, [Pid2, Call, Timeout]}} ->
+            io:format("~n~ts~n", [coding_agent_ansi:bright_red("Request timed out")]),
+            io:format("  Called: ~p~n", [element(1, Call)]),
+            case RetryCount < 2 of
+                true ->
+                    io:format("  ~ts (~p/3)...~n~n", [coding_agent_ansi:dim("Retrying"), RetryCount + 1]),
+                    process_message(SessionId, NewHistory, Input, Mode, RetryCount + 1);
+                false ->
+                    io:format("~n~ts~n", [coding_agent_ansi:bright_red("Max retries exceeded. The request failed multiple times.")]),
+                    io:format("  This usually means:~n"),
+                    io:format("  - Model is overloaded or slow~n"),
+                    io:format("  - Context is too long (use /trim to reduce)~n"),
+                    io:format("  - Network issue to Ollama/cloud~n~n"),
+                    {continue, History, Mode}
+            end;
+        error:undef:StacktraceUndef ->
+            [{M, F, A, _} | _] = StacktraceUndef,
+            io:format("~n~ts~n", [coding_agent_ansi:bright_yellow("Undefined function error:")]),
+            io:format("  ~p:~p/~p~n", [M, F, A]),
+            io:format("~ts~n", [coding_agent_ansi:bright_yellow("Please recompile and restart.")]);
+        Type2:Error2:Stacktrace2 ->
+            io:format("~n~ts ~p:~p~n", [coding_agent_ansi:bright_red("Session crashed:"), Type2, Error2]),
+            %% Report to healer if available
+            try
+                case whereis(coding_agent_healer) of
+                    undefined -> ok;
+                    _ ->
+                        coding_agent_healer:report_crash(repl_crash, {Type2, Error2}, Stacktrace2, #{session_id => SessionId}),
+                        io:format(coding_agent_ansi:dim("Crash logged.") ++ "~n")
+                end
+            catch _:_ -> ok
+            end,
+            analyze_and_suggest_fix(Error2, Stacktrace2),
+            io:format("~ts~n", [coding_agent_ansi:bright_yellow("Creating new session and continuing...")]),
+            {ok, {NewSessionId3, _}} = coding_agent_session:new(),
+            io:format("New session: ~ts~n~n", [coding_agent_ansi:bright_magenta(NewSessionId3)]),
+            process_message(NewSessionId3, NewHistory, Input, Mode, 0)
     end.
 
 generate_crash_id() ->
@@ -1064,9 +1004,9 @@ format_stacktrace([{M, F, A} | Rest]) ->
 format_stacktrace([_ | Rest]) ->
     format_stacktrace(Rest).
 
-analyze_and_suggest_fix(Error, Stacktrace) ->
+analyze_and_suggest_fix(Error2, Stacktrace2) ->
     %% Show the error clearly
-    io:format("~n" ++ coding_agent_ansi:bright_red("** Error:") ++ " ~p~n", [Error]),
+    io:format("~n" ++ coding_agent_ansi:bright_red("** Error:") ++ " ~p~n", [Error2]),
     io:format("~n" ++ coding_agent_ansi:bright_yellow("** Stacktrace:") ++ "~n"),
     lists:foreach(fun
         ({M, F, A, Info}) ->
@@ -1079,10 +1019,10 @@ analyze_and_suggest_fix(Error, Stacktrace) ->
             io:format("    ~p:~p/~p~n", [M, F, Arity]);
         (_) ->
             io:format("    (unknown location)~n")
-    end, Stacktrace),
+    end, Stacktrace2),
     
     %% Suggest fix based on error type
-    case Error of
+    case Error2 of
         {undef, {Mod, Fun, Arity}} when is_atom(Mod), is_atom(Fun) ->
             %% Check if function exists in another module
             case find_function_in_modules(Mod, Fun, Arity) of
@@ -1143,11 +1083,11 @@ is_http_error(max_retries_exceeded) -> true;
 is_http_error(timeout) -> true;
 is_http_error(_) -> false.
 
-report_crash(Type, Error, Stacktrace) ->
+report_crash(Type, Error, Stacktrace, SessionId) when is_binary(SessionId) ->
     case whereis(coding_agent_healer) of
         undefined -> ok;
         _ ->
-            coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace),
+            coding_agent_healer:report_crash(repl_crash, {Type, Error}, Stacktrace, #{session_id => SessionId}),
             io:format(coding_agent_ansi:dim("Crash logged.") ++ "~n"),
             {_, CrashAnalysis} = coding_agent_healer:analyze_crash(Type, Stacktrace),
             case maps:get(suggested_fix, CrashAnalysis, #{}) of
@@ -1155,6 +1095,9 @@ report_crash(Type, Error, Stacktrace) ->
                 _ -> ok
             end
     end.
+
+report_crash(Type, Error, Stacktrace) ->
+    report_crash(Type, Error, Stacktrace, <<>>).
 
 dump_context(SessionId, History, Filename, Format0) ->
     Format = case Format0 of
@@ -1518,6 +1461,20 @@ print_response(Content) when is_binary(Content) ->
     end, Lines);
 print_response(Content) ->
     print_response(iolist_to_binary(Content)).
+
+stream_callback(Content, Thinking, #{thinking_shown := false}) when Thinking =/= <<>>, Thinking =/= undefined ->
+    io:format("~s~s", [coding_agent_ansi:clear_line(), coding_agent_ansi:dim("Thinking...")]),
+    io:format("~s", [coding_agent_ansi:clear_line()]),
+    #{thinking_shown => true};
+stream_callback(Content, _Thinking, #{thinking_shown := true}) when Content =/= <<>>, Content =/= undefined ->
+    io:format("~ts~n", [coding_agent_ansi:bright_cyan("--- Response ---")]),
+    io:format("~ts", [Content]),
+    #{thinking_shown => content};
+stream_callback(Content, _Thinking, #{thinking_shown := content}) when Content =/= <<>>, Content =/= undefined ->
+    io:format("~ts", [Content]),
+    #{thinking_shown => content};
+stream_callback(_Content, _Thinking, Acc) ->
+    Acc.
 
 load_history() ->
     case file:read_file(?HISTORY_FILE) of

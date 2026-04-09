@@ -4,6 +4,7 @@
 -export([black/1, red/1, green/1, yellow/1, blue/1, magenta/1, cyan/1, white/1]).
 -export([bright_red/1, bright_green/1, bright_yellow/1, bright_blue/1, bright_magenta/1, bright_cyan/1, bright_white/1]).
 -export([bg_red/1, bg_green/1, bg_yellow/1, bg_blue/1, bg_magenta/1, bg_cyan/1, bg_white/1]).
+-export([clear_line/0, cursor_up/1, cursor_down/1, save_cursor/0, restore_cursor/0]).
 
 %% ANSI escape code helpers with NO_COLOR support.
 %% If NO_COLOR is set (per https://no-color.org/), all functions
@@ -35,6 +36,40 @@ reset() ->
     case no_color() of
         true  -> "";
         false -> ?RESET
+    end.
+
+%% --- Cursor movement (respect NO_COLOR) -----------------------------
+
+clear_line() ->
+    case no_color() of
+        true  -> "";
+        false -> "\e[2K\r"
+    end.
+
+cursor_up(N) when is_integer(N), N > 0 ->
+    case no_color() of
+        true  -> "";
+        false -> "\e[" ++ integer_to_list(N) ++ "A"
+    end;
+cursor_up(_) -> "".
+
+cursor_down(N) when is_integer(N), N > 0 ->
+    case no_color() of
+        true  -> "";
+        false -> "\e[" ++ integer_to_list(N) ++ "B"
+    end;
+cursor_down(_) -> "".
+
+save_cursor() ->
+    case no_color() of
+        true  -> "";
+        false -> "\e[s"
+    end.
+
+restore_cursor() ->
+    case no_color() of
+        true  -> "";
+        false -> "\e[u"
     end.
 
 %% --- Stripping ---------------------------------------------------------
