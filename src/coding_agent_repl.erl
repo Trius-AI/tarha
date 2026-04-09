@@ -223,7 +223,8 @@ process_command(SessionId, History, "help" ++ Rest, Mode) when Rest =:= []; hd(R
     io:format("  " ++ coding_agent_ansi:bright_white("/checkpoint") ++ coding_agent_ansi:dim("     - Create checkpoint") ++ "~n"),
     io:format("  " ++ coding_agent_ansi:bright_white("/restore <id>") ++ coding_agent_ansi:dim("  - Restore from checkpoint") ++ "~n"),
     io:format("  " ++ coding_agent_ansi:bright_white("/compact") ++ coding_agent_ansi:dim("        - Compact session (summarize and archive old context)") ++ "~n"),
-    io:format("  " ++ coding_agent_ansi:bright_white("/sessions") ++ coding_agent_ansi:dim("       - List saved sessions") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/sessions") ++ coding_agent_ansi:dim("       - List saved sessions (with metadata)") ++ "~n"),
+    io:format("  " ++ coding_agent_ansi:bright_white("/resume") ++ coding_agent_ansi:dim("        - Resume most recent session") ++ "~n"),
     io:format("  " ++ coding_agent_ansi:bright_white("/load <id>") ++ coding_agent_ansi:dim("      - Load a saved session") ++ "~n"),
     io:format("  " ++ coding_agent_ansi:bright_white("/save") ++ coding_agent_ansi:dim("           - Save current session") ++ "~n"),
     io:format("  " ++ coding_agent_ansi:bright_white("/clear") ++ coding_agent_ansi:dim("          - Clear session history") ++ "~n"),
@@ -656,24 +657,60 @@ process_command(SessionId, History, "fix " ++ CrashId, Mode) ->
     {continue, History, Mode};
     
 process_command(SessionId, History, "sessions" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
-    io:format("~nSaved Sessions:~n~n"),
-    case coding_agent_session:list_saved_sessions() of
-        {ok, SessionIds} when is_list(SessionIds) ->
-            case SessionIds of
-                [] -> 
+    io:format("~n~ts~n", [coding_agent_ansi:bright_cyan("Saved Sessions:")]),
+    case coding_agent_session_store:list_sessions_with_metadata() of
+        Sessions when is_list(Sessions) ->
+            case Sessions of
+                [] ->
                     io:format("  (no saved sessions)~n~n"),
                     io:format("Use /save to save the current session.~n~n");
                 _ ->
-                    lists:foreach(fun(Sid) ->
-                        SidStr = if is_binary(Sid) -> binary_to_list(Sid); true -> Sid end,
-                        io:format("  ~s~n", [SidStr])
-                    end, lists:sort(SessionIds)),
-                    io:format("~n~p session(s) found.~n~n", [length(SessionIds)])
+                    lists:foreach(fun(S) ->
+                        Id = maps:get(id, S, <<"unknown">>),
+                        IdStr = if is_binary(Id) -> binary_to_list(Id); true -> Id end,
+                        Summary = maps:get(summary, S, <<"">>),
+                        Model = maps:get(model, S, <<"">>),
+                        MsgCount = maps:get(message_count, S, 0),
+                        Tokens = maps:get(estimated_tokens, S, 0),
+                        ModelStr = if is_binary(Model) -> binary_to_list(Model); true -> "unknown" end,
+                        SummaryStr = if is_binary(Summary) -> binary_to_list(Summary); true -> Summary end,
+                        io:format("  ~ts  (~p msg, ~p tokens, ~s)  \"~s\"~n",
+                                  [coding_agent_ansi:bright_white(IdStr), MsgCount, Tokens, ModelStr, SummaryStr])
+                    end, Sessions),
+                    io:format("~n~p session(s) found.~n", [length(Sessions)]),
+                    io:format("Use ~ts to load, ~ts to resume latest.~n~n",
+                              [coding_agent_ansi:bright_white("/load <id>"), coding_agent_ansi:bright_white("/resume")])
             end;
         {error, Reason} ->
             io:format("  Error listing sessions: ~p~n~n", [Reason])
     end,
     {continue, History, Mode};
+
+process_command(_SessionId, History, "resume" ++ Rest, Mode) when Rest =:= []; hd(Rest) =:= $\s; hd(Rest) =:= $\t ->
+    case coding_agent_session_store:list_sessions_with_metadata() of
+        Sessions when is_list(Sessions), length(Sessions) > 0 ->
+            Sorted = lists:sort(fun(A, B) ->
+                TA = maps:get(updated_at, A, {{1970,1,1},{0,0,0}}),
+                TB = maps:get(updated_at, B, {{1970,1,1},{0,0,0}}),
+                TA >= TB
+            end, Sessions),
+            MostRecent = hd(Sorted),
+            LoadId = maps:get(id, MostRecent, <<"">>),
+            Summary = maps:get(summary, MostRecent, <<"">>),
+            io:format("~n~ts Resuming session ~s: ~s~n~n",
+                      [coding_agent_ansi:bright_green("✓"), LoadId, Summary]),
+            case coding_agent_session:load_session(LoadId) of
+                {ok, {NewSessionId, _Pid}} ->
+                    loop(NewSessionId, [], Mode);
+                {error, Reason} ->
+                    io:format("~ts Failed to resume: ~p~n~n", [coding_agent_ansi:bright_red("✗"), Reason]),
+                    {continue, History, Mode}
+            end;
+        _ ->
+            io:format("~n~ts No saved sessions found. Start a new session.~n~n",
+                      [coding_agent_ansi:bright_yellow("!")]),
+            {continue, History, Mode}
+    end;
 
 process_command(SessionId, History, "load " ++ SessionIdArg, Mode) ->
     LoadId = list_to_binary(string:trim(SessionIdArg)),

@@ -13,7 +13,10 @@
     set_ollama_host/1,
     init_config/0,
     load_yaml/0,
-    load_yaml/1
+    load_yaml/1,
+    get_fallback_chain/0,
+    get_retryable_errors/0,
+    get_fallback_enabled/0
 ]).
 
 %% @doc Centralized configuration for the coding agent.
@@ -278,6 +281,30 @@ memory_consolidate_threshold() ->
 -spec session_max_messages() -> integer().
 session_max_messages() ->
     application:get_env(coding_agent, session_max_messages, 100).
+
+get_fallback_enabled() ->
+    application:get_env(coding_agent, fallback_enabled, true).
+
+get_fallback_chain() ->
+    case application:get_env(coding_agent, fallback_chain) of
+        {ok, Chain} when is_list(Chain), length(Chain) > 0 -> Chain;
+        _ ->
+            Primary = model(),
+            case application:get_env(coding_agent, fallback_model) of
+                {ok, Fallback} when is_binary(Fallback), Fallback =/= Primary ->
+                    [Primary, Fallback];
+                {ok, Fallback} when is_list(Fallback), length(Fallback) > 0 ->
+                    FB = list_to_binary(Fallback),
+                    case FB =:= Primary of
+                        true -> [Primary];
+                        false -> [Primary, FB]
+                    end;
+                _ -> [Primary]
+            end
+    end.
+
+get_retryable_errors() ->
+    application:get_env(coding_agent, retry_on, [timeout, connection_error, server_error]).
 
 %%===================================================================
 %% Setters (for programmatic config changes)

@@ -10,6 +10,11 @@
 
 %% Helper: start the undo server for a test, stop it after.
 with_undo_server(TestFun) ->
+    case whereis(coding_agent_undo) of
+        ExistingPid when is_pid(ExistingPid) ->
+            supervisor:terminate_child(coding_agent_sup, coding_agent_undo);
+        _ -> ok
+    end,
     {ok, Pid} = coding_agent_undo:start_link(),
     try
         TestFun()

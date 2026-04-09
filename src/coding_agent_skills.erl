@@ -1,6 +1,7 @@
 -module(coding_agent_skills).
 -export([start_link/0, start_link/1, stop/0]).
 -export([list_skills/0, list_skills/1, load_skill/1, get_always_skills/0, build_skills_summary/0]).
+-export([activate_conditional_skills/1, search_skills/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(state, {
@@ -62,6 +63,14 @@ handle_call(build_skills_summary, _From, State) ->
     Summary = do_build_skills_summary(State),
     {reply, {ok, Summary}, State};
 
+handle_call({activate_conditional_skills, FilePaths}, _From, State) ->
+    Activated = do_activate_conditional_skills(FilePaths, State),
+    {reply, {ok, Activated}, State};
+
+handle_call({search_skills, Query}, _From, State) ->
+    Results = do_search_skills(Query, State),
+    {reply, {ok, Results}, State};
+
 handle_call(_Req, _From, State) ->
     {reply, {error, unknown}, State}.
 
@@ -76,8 +85,6 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%% API Functions
 
 list_skills() ->
     gen_server:call(?MODULE, list_skills).
@@ -96,7 +103,13 @@ get_always_skills() ->
 build_skills_summary() ->
     gen_server:call(?MODULE, build_skills_summary).
 
-%% Internal Functions
+activate_conditional_skills(FilePaths) when is_list(FilePaths) ->
+    gen_server:call(?MODULE, {activate_conditional_skills, FilePaths});
+activate_conditional_skills(FilePath) ->
+    activate_conditional_skills([FilePath]).
+
+search_skills(Query) when is_binary(Query); is_list(Query) ->
+    gen_server:call(?MODULE, {search_skills, Query}).
 
 do_list_skills(State, FilterUnavailable) ->
     AllSkills = list_all_skills(State),
@@ -111,7 +124,6 @@ list_all_skills(#state{workspace_skills = WSSkills, builtin_skills = BuiltinSkil
         undefined -> [];
         Dir -> list_skills_in_dir(Dir, builtin)
     end,
-    % Workspace skills override builtin skills with same name
     WorkspaceNames = [maps:get(name, S) || S <- WorkspaceSkills],
     FilteredBuiltin = lists:filter(fun(S) ->
         not lists:member(maps:get(name, S), WorkspaceNames)
@@ -138,12 +150,10 @@ list_skills_in_dir(Dir, Source) ->
 
 do_load_skill(Name, #state{workspace_skills = WSSkills, builtin_skills = BuiltinSkills}) ->
     NameStr = ensure_string(Name),
-    % Check workspace first
     WSkill = filename:join([WSSkills, NameStr, ?SKILL_FILE]),
     case file:read_file(WSkill) of
         {ok, Content} -> Content;
         _ ->
-            % Check builtin
             case BuiltinSkills of
                 undefined -> <<>>;
                 Dir ->
@@ -158,7 +168,7 @@ do_load_skill(Name, #state{workspace_skills = WSSkills, builtin_skills = Builtin
 do_get_always_skills(State) ->
     AllSkills = do_list_skills(State, true),
     lists:filter(fun(Skill) ->
-        case get_skill_metadata(Skill) of
+        case skill_metadata(Skill) of
             #{always := true} -> true;
             #{always := <<"true">>} -> true;
             #{always := "true"} -> true;
@@ -174,7 +184,7 @@ do_build_skills_summary(State) ->
             SkillLines = lists:map(fun(Skill) ->
                 Name = maps:get(name, Skill),
                 Path = maps:get(path, Skill),
-                Desc = get_skill_description(Skill),
+                Desc = skill_description(Skill),
                 Available = check_requirements(Skill),
                 NameBin = escape_xml(iolist_to_binary(Name)),
                 DescBin = escape_xml(iolist_to_binary(Desc)),
@@ -188,7 +198,7 @@ do_build_skills_summary(State) ->
                         "    <location>", PathBin/binary, "</location>\n",
                         "  </skill>">>;
                     false ->
-                        Missing = get_missing_requirements(Skill),
+                        Missing = missing_requirements(Skill),
                         MissingBin = escape_xml(iolist_to_binary(Missing)),
                         <<"  <skill available=\"", AvailBin/binary, "\">\n",
                         "    <name>", NameBin/binary, "</name>\n",
@@ -202,9 +212,92 @@ do_build_skills_summary(State) ->
             <<"<skills>\n", Inner/binary, "\n</skills>">>
     end.
 
-get_skill_metadata(#{name := Name} = Skill) ->
+skill_metadata(#{name := Name}) ->
     Content = do_load_skill(Name, #state{}),
     parse_frontmatter(Content).
+
+skill_description(#{name := Name} = Skill) ->
+    case skill_metadata(Skill) of
+        #{description := Desc} -> Desc;
+        _ -> iolist_to_binary(Name)
+    end.
+
+check_requirements(#{name := Name} = Skill) ->
+    Metadata = skill_metadata(Skill),
+    Requires = maps:get(requires, Metadata, #{}),
+    case Requires of
+        #{bins := Bins} -> check_bins(Bins);
+        _ -> true
+    end.
+
+check_bins(Bins) when is_list(Bins) ->
+    lists:all(fun(Bin) ->
+        os:find_executable(binary_to_list(Bin)) =/= false
+    end, Bins);
+check_bins(_) -> true.
+
+missing_requirements(#{name := Name} = Skill) ->
+    Metadata = skill_metadata(Skill),
+    Requires = maps:get(requires, Metadata, #{}),
+    MissingBins = case maps:get(bins, Requires, []) of
+        [] -> [];
+        Bins -> [<<"CLI: ", (iolist_to_binary(B))/binary>> || B <- Bins, os:find_executable(binary_to_list(B)) =:= false]
+    end,
+    MissingEnv = case maps:get(env, Requires, []) of
+        [] -> [];
+        Envs -> [<<"ENV: ", (iolist_to_binary(E))/binary>> || E <- Envs, os:getenv(binary_to_list(E)) =:= false]
+    end,
+    iolist_to_binary(lists:join(<<", ">>, MissingBins ++ MissingEnv)).
+
+do_activate_conditional_skills(FilePaths, State) ->
+    AllSkills = do_list_skills(State, false),
+    lists:filter(fun(Skill) ->
+        case skill_metadata(Skill) of
+            #{path_patterns := Patterns} when is_list(Patterns) ->
+                lists:any(fun(Pattern) ->
+                    matches_any_pattern(FilePaths, Pattern)
+                end, Patterns);
+            _ -> false
+        end
+    end, AllSkills).
+
+do_search_skills(Query, State) ->
+    QueryBin = if is_list(Query) -> list_to_binary(Query); is_binary(Query) -> Query end,
+    AllSkills = do_list_skills(State, false),
+    lists:filter(fun(Skill) ->
+        Name = maps:get(name, Skill, <<"">>),
+        Desc = skill_description(Skill),
+        Tags = case skill_metadata(Skill) of
+            #{tags := T} when is_list(T) -> T;
+            _ -> []
+        end,
+        NameMatch = binary:match(Name, QueryBin) =/= nomatch,
+        DescMatch = binary:match(Desc, QueryBin) =/= nomatch,
+        TagMatch = lists:any(fun(T) ->
+            binary:match(iolist_to_binary(T), QueryBin) =/= nomatch
+        end, Tags),
+        NameMatch orelse DescMatch orelse TagMatch
+    end, AllSkills).
+
+matches_any_pattern(FilePaths, Pattern) ->
+    PatternBin = if is_list(Pattern) -> list_to_binary(Pattern); is_binary(Pattern) -> Pattern end,
+    lists:any(fun(FP) ->
+        FPBin = if is_list(FP) -> list_to_binary(FP); is_binary(FP) -> FP end,
+        match_glob(PatternBin, FPBin)
+    end, FilePaths).
+
+match_glob(Pattern, Path) ->
+    RePattern = glob_to_regex(Pattern),
+    case re:run(Path, RePattern, [{capture, none}]) of
+        match -> true;
+        nomatch -> false
+    end.
+
+glob_to_regex(Glob) ->
+    Bin = if is_list(Glob) -> list_to_binary(Glob); is_binary(Glob) -> Glob end,
+    Esc = binary:replace(Bin, <<".">>, <<"\\.">>, [global]),
+    Esc2 = binary:replace(Esc, <<"*">>, <<".*">>, [global]),
+    binary:replace(Esc2, <<"?">>, <<".">>, [global]).
 
 parse_frontmatter(Content) when is_binary(Content) ->
     case binary:match(Content, <<"---">>) of
@@ -225,8 +318,8 @@ parse_yaml_frontmatter(YamlBin) ->
             [Key, Value] ->
                 KeyStr = binary:strip(Key),
                 ValStr = case binary:strip(Value) of
-                    <<"\"", Rest/binary>> -> binary:strip(Rest, trailing, $");  % Handle double quotes
-                    <<"''", Rest/binary>> -> binary:strip(Rest, trailing, $');  % Handle single quotes
+                    <<"\"", Rest/binary>> -> binary:strip(Rest, trailing, $");
+                    <<"''", Rest/binary>> -> binary:strip(Rest, trailing, $');
                     Other -> Other
                 end,
                 case KeyStr of
@@ -234,6 +327,13 @@ parse_yaml_frontmatter(YamlBin) ->
                     <<"always">> -> Acc#{always => parse_bool(ValStr)};
                     <<"description">> -> Acc#{description => ValStr};
                     <<"metadata">> -> Acc#{metadata => ValStr};
+                    <<"context">> -> Acc#{context => parse_atom(ValStr)};
+                    <<"model">> -> Acc#{model => ValStr};
+                    <<"path_patterns">> -> Acc#{path_patterns => parse_yaml_value(ValStr)};
+                    <<"tags">> -> Acc#{tags => parse_yaml_value(ValStr)};
+                    <<"on_activate">> -> Acc#{hooks => maps:put(on_activate, ValStr, maps:get(hooks, Acc, #{}))};
+                    <<"on_deactivate">> -> Acc#{hooks => maps:put(on_deactivate, ValStr, maps:get(hooks, Acc, #{}))};
+                    <<"max_tokens">> -> Acc#{max_tokens => parse_int(ValStr)};
                     _ -> Acc
                 end;
             _ -> Acc
@@ -247,7 +347,6 @@ parse_yaml_value(Val) when is_binary(Val) ->
     end.
 
 parse_yaml_list(Val) ->
-    % Extract items from [item1, item2, ...]
     Inner = binary:replace(Val, <<"[">>, <<"">>, [global]),
     Inner2 = binary:replace(Inner, <<"]">>, <<"">>, [global]),
     Items = binary:split(Inner2, <<",">>, [global]),
@@ -262,38 +361,19 @@ parse_bool(Val) ->
         _ -> Val
     end.
 
-get_skill_description(#{name := Name} = Skill) ->
-    case get_skill_metadata(Skill) of
-        #{description := Desc} -> Desc;
-        _ -> iolist_to_binary(Name)
+parse_atom(Val) ->
+    case binary:strip(Val) of
+        <<"inline">> -> inline;
+        <<"fork">> -> fork;
+        <<"background">> -> background;
+        Other -> Other
     end.
 
-check_requirements(#{name := Name} = Skill) ->
-    Metadata = get_skill_metadata(Skill),
-    Requires = maps:get(requires, Metadata, #{}),
-    case Requires of
-        #{bins := Bins} -> check_bins(Bins);
-        _ -> true
+parse_int(Val) ->
+    case catch binary_to_integer(binary:strip(Val)) of
+        Int when is_integer(Int) -> Int;
+        _ -> 0
     end.
-
-check_bins(Bins) when is_list(Bins) ->
-    lists:all(fun(Bin) ->
-        os:find_executable(binary_to_list(Bin)) =/= false
-    end, Bins);
-check_bins(_) -> true.
-
-get_missing_requirements(#{name := Name} = Skill) ->
-    Metadata = get_skill_metadata(Skill),
-    Requires = maps:get(requires, Metadata, #{}),
-    MissingBins = case maps:get(bins, Requires, []) of
-        [] -> [];
-        Bins -> [<<"CLI: ", (iolist_to_binary(B))/binary>> || B <- Bins, os:find_executable(binary_to_list(B)) =:= false]
-    end,
-    MissingEnv = case maps:get(env, Requires, []) of
-        [] -> [];
-        Envs -> [<<"ENV: ", (iolist_to_binary(E))/binary>> || E <- Envs, os:getenv(binary_to_list(E)) =:= false]
-    end,
-    iolist_to_binary(lists:join(<<", ">>, MissingBins ++ MissingEnv)).
 
 escape_xml(Bin) when is_binary(Bin) ->
     Bin1 = binary:replace(Bin, <<"&">>, <<"&amp;">>, [global]),
@@ -302,8 +382,6 @@ escape_xml(Bin) when is_binary(Bin) ->
 
 ensure_string(B) when is_binary(B) -> binary_to_list(B);
 ensure_string(L) when is_list(L) -> L.
-
-%% Context building functions
 
 get_skills_context(SkillNames, State) ->
     Content = lists:filtermap(fun(Name) ->

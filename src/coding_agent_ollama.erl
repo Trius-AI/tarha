@@ -1,7 +1,9 @@
 -module(coding_agent_ollama).
 -export([generate/2, generate_stream/2, chat/2, chat_with_tools/3, chat_stream/3, chat_stream/4]).
 -export([chat_with_tools_cancellable/4, chat_stream_cancellable/5]).
--export([count_tokens/1, count_tokens_accurate/2, truncate_messages/2]).
+-export([chat_with_fallback/3, chat_with_fallback/4, is_retryable_error/1]).
+-export([chat_with_tools_streaming/4, chat_with_tools_streaming/5]).
+-export([count_tokens/1, count_tokens_detailed/1, count_tokens_accurate/2, truncate_messages/2]).
 -export([start_token_cache/0, clear_token_cache/0]).
 -export([get_model_info/1, get_model_context_length/1, get_model_context_length/2]).
 -export([show_model/2, get_model_capabilities/1]).
@@ -13,6 +15,19 @@
 -define(RETRY_DELAY_MAX, 60000).  % 1 minute maximum.
 -define(TOKEN_CACHE_TABLE, coding_agent_token_cache).
 -define(TOKEN_CACHE_MAX_SIZE, 10000).  % Max cached entries
+-define(CACHE_TTL_MS, 300000).  % 5 minute TTL for token cache
+-define(TOKEN_RATIOS, #{
+    erlang => 2.3,
+    javascript => 2.5,
+    python => 2.8,
+    html => 3.0,
+    json => 2.2,
+    yaml => 3.0,
+    markdown => 3.5,
+    english => 4.0,
+    mixed => 2.8,
+    default => 3.0
+}).
 
 %% Token counting strategies:
 %% 1. Accurate (count_tokens_accurate/2): Uses Ollama API to count tokens (when available)
@@ -158,6 +173,104 @@ chat_with_tools(Model, Messages, Tools) when is_list(Model) ->
     chat_with_tools(list_to_binary(Model), Messages, Tools);
 chat_with_tools(Model, Messages, Tools) when is_binary(Model) ->
     do_with_retry(fun() -> do_chat_with_tools(Model, Messages, Tools) end).
+
+chat_with_tools_streaming(Model, Messages, Tools, CallbackOrTimeout) ->
+    case is_function(CallbackOrTimeout, 1) of
+        true -> chat_with_tools_streaming_impl(Model, Messages, Tools, CallbackOrTimeout, infinity);
+        false -> chat_with_tools_streaming_impl(Model, Messages, Tools, fun(_) -> ok end, CallbackOrTimeout)
+    end.
+
+chat_with_tools_streaming(Model, Messages, Tools, Callback, Timeout) when is_function(Callback, 1) ->
+    chat_with_tools_streaming_impl(Model, Messages, Tools, Callback, Timeout).
+
+chat_with_tools_streaming_impl(Model, Messages, Tools, Callback, Timeout) ->
+    Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
+    Url = Host ++ "/api/chat",
+    SupportsThinking = model_supports_thinking(Model),
+    SupportsTools = model_supports_tools(Model),
+    ToolsField = case SupportsTools of
+        true -> [{<<"tools">>, Tools}];
+        false -> []
+    end,
+    ThinkField = case SupportsThinking of
+        true -> [{<<"think">>, true}];
+        false -> []
+    end,
+    Body0 = #{
+        model => Model,
+        messages => Messages,
+        stream => true
+    },
+    Body1 = maps:merge(Body0, maps:from_list(ToolsField)),
+    Body = maps:merge(Body1, maps:from_list(ThinkField)),
+    Encoded = jsx:encode(Body),
+    Headers = [{<<"Content-Type">>, <<"application/json">>}],
+    case hackney:post(Url, Headers, Encoded, [{recv_timeout, Timeout}, stream]) of
+        {ok, Ref} ->
+            Result = collect_streaming_tool_calls(Ref, Callback, #{tool_calls => [], thinking => <<>>, content => <<>>}),
+            hackney:close(Ref),
+            Result;
+        {error, Reason} ->
+            {error, {streaming_error, Reason}}
+    end.
+
+collect_streaming_tool_calls(Ref, Callback, Acc) ->
+    case hackney:stream_next(Ref) of
+        {ok, done} ->
+            {ok, Acc};
+        {ok, Data} ->
+            Lines = binary:split(Data, <<"\n">>, [global, trim]),
+            NewAcc = lists:foldl(fun(Line, A) ->
+                case Line of
+                    <<>> -> A;
+                    _ ->
+                        case jsx:is_json(Line) of
+                            true ->
+                                Chunk = jsx:decode(Line, [return_maps]),
+                                process_streaming_chunk(Chunk, A, Callback);
+                            false -> A
+                        end
+                end
+            end, Acc, Lines),
+            collect_streaming_tool_calls(Ref, Callback, NewAcc);
+        {error, Reason} ->
+            {error, {streaming_error, Reason}}
+    end.
+
+process_streaming_chunk(Chunk, Acc, Callback) ->
+    ToolCalls = maps:get(<<"tool_calls">>, Acc, []),
+    Thinking = maps:get(<<"thinking">>, Acc, <<>>),
+    Content = maps:get(<<"content">>, Acc, <<>>),
+    case maps:get(<<"tool_calls">>, Chunk, undefined) of
+        undefined ->
+            case maps:get(<<"message">>, Chunk, undefined) of
+                #{<<"tool_calls">> := TCA} when is_list(TCA) ->
+                    NewTCs = ToolCalls ++ TCA,
+                    Callback({tool_calls, TCA}),
+                    Acc#{tool_calls => NewTCs};
+                #{<<"content">> := C} when is_binary(C), C =/= <<>> ->
+                    NewContent = <<Content/binary, C/binary>>,
+                    Callback({content, C}),
+                    Acc#{content => NewContent};
+                #{<<"thinking">> := T} when is_binary(T), T =/= <<>> ->
+                    NewThinking = <<Thinking/binary, T/binary>>,
+                    Callback({thinking, T}),
+                    Acc#{thinking => NewThinking};
+                _ ->
+                    case maps:get(<<"content">>, Chunk, <<>>) of
+                        C when is_binary(C), C =/= <<>> ->
+                            NewContent = <<Content/binary, C/binary>>,
+                            Callback({content, C}),
+                            Acc#{content => NewContent};
+                        _ -> Acc
+                    end
+            end;
+        TCBin ->
+            TCs = if is_list(TCBin) -> TCBin; true -> [] end,
+            NewTCs = ToolCalls ++ TCs,
+            Callback({tool_calls, TCs}),
+            Acc#{tool_calls => NewTCs}
+    end.
 
 do_chat_with_tools(Model, Messages, Tools) ->
     Host = application:get_env(coding_agent, ollama_host, "http://localhost:11434"),
@@ -307,17 +420,17 @@ collect_chat_stream(Callback, ResponseAcc, ThinkingAcc, ContentAcc) ->
 count_tokens(Text) when is_binary(Text), byte_size(Text) == 0 ->
     0;
 count_tokens(Text) when is_binary(Text) ->
-    %% Detect content type and apply appropriate ratio
-    %% Code tends to have more symbols, shorter identifiers
-    CodeRatio = estimate_code_ratio(Text),
-    %% Code: ~2.5 chars/token, English: ~4 chars/token
-    EffectiveRatio = 2.5 + (1.5 * (1 - CodeRatio)),
-    max(1, round(byte_size(Text) / EffectiveRatio));
+    ContentType = detect_content_type(Text),
+    Ratio = maps:get(ContentType, ?TOKEN_RATIOS, 3.0),
+    BaseTokens = max(1, round(byte_size(Text) / Ratio)),
+    ToolCallAdjust = count_tool_call_adjustment(Text),
+    SpecialAdjust = 10,
+    BaseTokens + ToolCallAdjust + SpecialAdjust;
 count_tokens(Text) when is_list(Text) ->
     try
         count_tokens(iolist_to_binary(Text))
     catch
-        _:_ -> max(1, length(Text) div 3)  % Fallback estimate
+        _:_ -> max(1, length(Text) div 3)
     end;
 count_tokens(Messages) when is_list(Messages) ->
     lists:foldl(fun(Msg, Acc) ->
@@ -336,7 +449,7 @@ count_tokens(Messages) when is_list(Messages) ->
                         _:_ -> Acc + 50
                     end;
                 #{<<"tool_calls">> := _TCs} ->
-                    Acc + 100;  % Estimate for tool calls
+                    Acc + 100;
                 _ ->
                     Acc + 10
             end
@@ -345,74 +458,179 @@ count_tokens(Messages) when is_list(Messages) ->
         end
     end, 0, Messages).
 
-%% Estimate how much of the text is code vs natural language
-%% Returns a value between 0 (pure English) and 1 (pure code)
-estimate_code_ratio(Text) when is_binary(Text) ->
-    Size = byte_size(Text),
-    if Size == 0 -> 0.0; true ->
-        %% Count code-like patterns
-        %% Code has: more brackets, semicolons, equals signs, etc.
-        BracketCount = binary:matches(Text, [<<"{">>, <<"}">>, <<"[">>, <<"]">>, <<"(">>, <<")">>]),
-        SemicolonCount = binary:matches(Text, <<";">>),
-        EqualsCount = binary:matches(Text, <<"=">>),
-        DotCount = binary:matches(Text, <<".">>),
-        ArrowCount = binary:matches(Text, [<<"->">>, <<"=>">>, <<"::">>]),
-        
-        %% Total code indicators
-        CodeIndicators = length(BracketCount) + length(SemicolonCount) + 
-                        length(EqualsCount) + length(ArrowCount),
-        
-        %% Natural text has more dots and longer text
-        NaturalIndicators = length(DotCount),
-        
-        %% Ratio based on density of code patterns
-        %% Code: ~5-10% symbols, English: ~2-3% symbols
-        CodeDensity = min(1.0, CodeIndicators / (Size / 100)),
-        
-        %% Also check for typical code keywords
-        CodeKeywords = binary:matches(Text, [<<"function">>, <<"def ">>, <<"var ">>, 
-                                             <<"const ">>, <<"let ">>, <<"if ">>, 
-                                             <<"else ">>, <<"return ">>, <<"import ">>,
-                                             <<"module ">>, <<"export ">>]),
-        KeywordDensity = min(1.0, length(CodeKeywords) / (Size / 200)),
-        
-        %% Weighted combination
-        (CodeDensity * 0.6 + KeywordDensity * 0.4)
+detect_content_type(Content) when is_binary(Content) ->
+    CondList = [
+        {fun is_erlang_content/1, erlang},
+        {fun is_javascript_content/1, javascript},
+        {fun is_python_content/1, python},
+        {fun is_html_content/1, html},
+        {fun is_json_content/1, json},
+        {fun is_yaml_content/1, yaml},
+        {fun is_markdown_content/1, markdown}
+    ],
+    detect_type(Content, CondList, mixed).
+
+detect_type(_Content, [], Default) -> Default;
+detect_type(Content, [{Detector, Type} | Rest], Default) ->
+    case Detector(Content) of
+        true -> Type;
+        false -> detect_type(Content, Rest, Default)
     end.
+
+count_tokens_detailed(Content) when is_binary(Content) ->
+    ContentType = detect_content_type(Content),
+    Ratio = maps:get(ContentType, ?TOKEN_RATIOS, 3.0),
+    BaseTokens = max(1, round(byte_size(Content) / Ratio)),
+    ToolCallAdjust = count_tool_call_adjustment(Content),
+    #{
+        tokens => BaseTokens + ToolCallAdjust + 10,
+        content_type => ContentType,
+        ratio => Ratio,
+        base_tokens => BaseTokens,
+        tool_call_overhead => ToolCallAdjust,
+        message_overhead => 10
+    };
+count_tokens_detailed(Messages) when is_list(Messages) ->
+    count_tokens_detailed(iolist_to_binary(
+        lists:foldl(fun(M, Acc) ->
+            Content = case M of
+                #{<<"content">> := C} when is_binary(C) -> C;
+                _ -> <<>>
+            end,
+            <<Acc/binary, " ", Content/binary>>
+        end, <<>>, Messages))).
+
+is_erlang_content(Content) ->
+    binary:match(Content, <<"-module(">>) =/= nomatch orelse
+    binary:match(Content, <<"-export(">>) =/= nomatch orelse
+    binary:match(Content, <<"-spec(">>) =/= nomatch.
+
+is_javascript_content(Content) ->
+    binary:match(Content, <<"function ">>) =/= nomatch orelse
+    binary:match(Content, <<"const ">>) =/= nomatch orelse
+    binary:match(Content, <<"=>> })">>) =/= nomatch orelse
+    binary:match(Content, <<"require(">>) =/= nomatch.
+
+is_python_content(Content) ->
+    binary:match(Content, <<"def ">>) =/= nomatch orelse
+    binary:match(Content, <<"import ">>) =/= nomatch orelse
+    binary:match(Content, <<"class ">>) =/= nomatch orelse
+    binary:match(Content, <<"self.">>) =/= nomatch.
+
+is_html_content(Content) ->
+    binary:match(Content, <<"<html">>) =/= nomatch orelse
+    binary:match(Content, <<"<div">>) =/= nomatch orelse
+    binary:match(Content, <<"<!DOCTYPE">>) =/= nomatch.
+
+is_json_content(Content) ->
+    Size = byte_size(Content),
+    Size > 1 andalso
+    ((binary:at(Content, 0) =:= ${ andalso binary:at(Content, Size - 1) =:= $})
+     orelse (binary:at(Content, 0) =:= $[ andalso binary:at(Content, Size - 1) =:= $])).
+
+is_yaml_content(Content) ->
+    binary:match(Content, <<"---">>) =/= nomatch orelse
+    (binary:match(Content, <<": ">>) =/= nomatch andalso
+     binary:match(Content, <<"  ">>) =/= nomatch andalso
+     binary:match(Content, <<"- ">>) =/= nomatch).
+
+is_markdown_content(Content) ->
+    binary:match(Content, <<"## ">>) =/= nomatch orelse
+    binary:match(Content, <<"```">>) =/= nomatch orelse
+    binary:match(Content, <<"[">>) =/= nomatch andalso binary:match(Content, <<"](">>) =/= nomatch.
+
+count_tool_call_adjustment(Content) ->
+    ToolCallCount = length(binary:matches(Content, <<"tool_calls">>))
+                  + length(binary:matches(Content, <<"\"function\"">>)),
+    ToolCallCount * 100.
 
 %% Accurate token counting using Ollama API
 %% This sends the text to the API and gets actual token count from prompt_eval_count
 %% Caches results to avoid redundant API calls
+
 count_tokens_accurate(Model, Text) when is_binary(Text) ->
     CacheKey = {Model, erlang:phash2(Text)},
     Table = get_token_cache(),
-    
-    %% Check cache first
+    Now = erlang:system_time(millisecond),
     case ets:lookup(Table, CacheKey) of
-        [{_, Count}] -> 
+        [{_, Count, CachedAt}] when Now - CachedAt < ?CACHE_TTL_MS ->
             {ok, Count};
+        [{_, _Count, _CachedAt}] ->
+            ets:delete(Table, CacheKey),
+            do_accurate_count(Model, Text, CacheKey, Table);
         [] ->
-            %% Make API call to get actual token count
-            case get_token_count_from_api(Model, Text) of
-                {ok, Count} ->
-                    %% Cache the result (limit cache size)
-                    CacheSize = ets:info(Table, size),
-                    if CacheSize > ?TOKEN_CACHE_MAX_SIZE ->
-                        ets:delete_all_objects(Table);
-                    true -> ok
-                    end,
-                    ets:insert(Table, {CacheKey, Count}),
-                    {ok, Count};
-                {error, Reason} ->
-                    %% Fall back to estimate on error
-                    {error, Reason, count_tokens(Text)}
-            end
+            do_accurate_count(Model, Text, CacheKey, Table)
     end;
 count_tokens_accurate(Model, Text) when is_list(Text) ->
     count_tokens_accurate(Model, iolist_to_binary(Text));
 count_tokens_accurate(Model, Messages) when is_list(Messages) ->
     %% For message lists, use estimate since API doesn't directly tokenize messages
     {ok, count_tokens(Messages)}.
+
+do_accurate_count(Model, Text, CacheKey, Table) ->
+    case get_token_count_from_api(Model, Text) of
+        {ok, Count} ->
+            CacheSize = ets:info(Table, size),
+            if CacheSize > ?TOKEN_CACHE_MAX_SIZE ->
+                ets:delete_all_objects(Table);
+            true -> ok
+            end,
+            ets:insert(Table, {CacheKey, Count, erlang:system_time(millisecond)}),
+            {ok, Count};
+        {error, Reason} ->
+            {error, Reason, count_tokens(Text)}
+    end.
+
+chat_with_fallback(Messages, Tools, SessionId) ->
+    chat_with_fallback(Messages, Tools, SessionId, []).
+
+chat_with_fallback(Messages, Tools, SessionId, Errors) ->
+    Chain = coding_agent_config:get_fallback_chain(),
+    chat_with_fallback_impl(Chain, Messages, Tools, SessionId, Errors).
+
+chat_with_fallback_impl([], _Messages, _Tools, _SessionId, Errors) ->
+    {error, {all_models_failed, Errors}};
+chat_with_fallback_impl([Model | Rest], Messages, Tools, SessionId, Errors) ->
+    case model_supports_tools(Model) of
+        false ->
+            chat_with_fallback_impl(Rest, Messages, Tools, SessionId,
+                [{Model, no_tool_support} | Errors]);
+        true ->
+            case do_chat_with_tools(Model, Messages, Tools) of
+                {ok, Response} ->
+                    case Errors of
+                        [] -> {ok, Response};
+                        _ ->
+                            {OrigModel, _} = hd(Errors),
+                            io:format("[ollama] Model ~s unavailable, fell back to ~s~n",
+                                      [OrigModel, Model]),
+                            {ok, Response, {fallback, OrigModel, Model}}
+                    end;
+                {error, Reason} ->
+                    case is_retryable_error(Reason) of
+                        true ->
+                            chat_with_fallback_impl(Rest, Messages, Tools, SessionId,
+                                [{Model, Reason} | Errors]);
+                        false ->
+                            {error, {Model, Reason}}
+                    end
+            end
+    end.
+
+is_retryable_error(Reason) ->
+    Retryable = coding_agent_config:get_retryable_errors(),
+    lists:any(fun(E) ->
+        case Reason of
+            {error, R} -> is_retryable_error(R);
+            timeout -> E =:= timeout;
+            connection_error -> E =:= connection_error;
+            server_error -> E =:= server_error;
+            {http_error, Status, _} when Status >= 500 -> E =:= server_error;
+            {http_error, 408, _} -> E =:= server_error;
+            {http_error, 429, _} -> E =:= server_error;
+            _ -> false
+        end
+    end, Retryable).
 
 %% Get actual token count by making a minimal API call
 get_token_count_from_api(Model, Text) ->

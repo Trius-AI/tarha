@@ -30,6 +30,7 @@ execute(<<"edit_file">>, #{<<"path">> := Path, <<"old_string">> := OldStr, <<"ne
             coding_agent_tools:report_progress(<<"edit_file">>, <<"starting">>, #{path => Path}),
             PathStr = sanitize_path(Path),
             ReplaceAll = maps:get(<<"replace_all">>, Args, false),
+            DryRun = maps:get(<<"dry_run">>, Args, false),
             case file:read_file(PathStr) of
                 {ok, Content} ->
                     ContentStr = binary_to_list(Content),
@@ -37,36 +38,72 @@ execute(<<"edit_file">>, #{<<"path">> := Path, <<"old_string">> := OldStr, <<"ne
                     NewStrList = binary_to_list(NewStr),
                     case coding_agent_tools:find_occurrences(ContentStr, OldStrList) of
                         0 ->
-                            Result = #{<<"success">> => false, <<"error">> => <<"Old string not found in file">>},
-                            coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
-                            Result;
+                            NormResult = try_normalized_match(Content, OldStr, NewStr, Path, ReplaceAll, DryRun),
+                            case NormResult of
+                                {ok, Result} -> Result;
+                                not_found ->
+                                    Result = #{<<"success">> => false, <<"error">> => <<"Old string not found in file">>,
+                                               <<"error_code">> => <<"not_found">>},
+                                    coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
+                                    Result
+                            end;
                         Count when Count > 1 andalso ReplaceAll =/= true ->
                             Result = #{<<"success">> => false, <<"error">> => iolist_to_binary(io_lib:format("Found ~b occurrences. Use replace_all to replace all.", [Count]))},
                             coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
                             Result;
                         _ ->
-                            _ = create_backup_internal(PathStr),
-                            NewContent = case ReplaceAll of
-                                true -> coding_agent_tools:replace_all(ContentStr, OldStrList, NewStrList);
-                                false -> string:replace(ContentStr, OldStrList, NewStrList)
-                            end,
-                            case file:write_file(PathStr, list_to_binary(NewContent)) of
-                                ok ->
-                                    Result = #{<<"success">> => true, <<"message">> => <<"File edited successfully">>},
-                                    coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
-                                    coding_agent_tools:report_progress(<<"edit_file">>, <<"complete">>, #{path => Path}),
-                                    Result;
-                                {error, Reason} ->
-                                    restore_backup_internal(PathStr),
-                                    Result = #{<<"success">> => false, <<"error">> => list_to_binary(file:format_error(Reason))},
-                                    coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
-                                    Result
-                            end
+                            apply_edit(Content, Path, PathStr, OldStrList, NewStrList, ReplaceAll, DryRun)
                     end;
                 {error, Reason} ->
                     Result = #{<<"success">> => false, <<"error">> => list_to_binary(file:format_error(Reason))},
                     coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
                     Result
+            end
+    end;
+
+execute(<<"edit_file">>, #{<<"path">> := Path, <<"start_line">> := StartLine, <<"new_string">> := NewStr} = Args) ->
+    case coding_agent_tools:safety_check(<<"edit_file">>, Args) of
+        skip -> #{<<"success">> => false, <<"error">> => <<"Operation skipped by safety check">>};
+        {modify, NewArgs} -> coding_agent_tools:execute(<<"edit_file">>, NewArgs);
+        proceed ->
+            PathStr = sanitize_path(Path),
+            DryRun = maps:get(<<"dry_run">>, Args, false),
+            case file:read_file(PathStr) of
+                {ok, Content} ->
+                    Lines = binary:split(Content, <<"\n">>, [global]),
+                    EndLine = maps:get(<<"end_line">>, Args, StartLine),
+                    LineCount = length(Lines),
+                    case StartLine < 1 orelse EndLine < StartLine orelse EndLine > LineCount of
+                        true ->
+                            #{<<"success">> => false, <<"error">> => <<"Invalid line range">>,
+                              <<"error_code">> => <<"invalid_range">>};
+                        false ->
+                            Before = lists:sublist(Lines, StartLine - 1),
+                            After = lists:nthtail(EndLine, Lines),
+                            NewLines = binary:split(NewStr, <<"\n">>, [global]),
+                            NewContent = iolist_to_binary([
+                                lists:join(<<"\n">>, Before), <<"\n">>,
+                                lists:join(<<"\n">>, NewLines), <<"\n">>,
+                                lists:join(<<"\n">>, After)
+                            ]),
+                            case DryRun of
+                                true ->
+                                    #{<<"success">> => true, <<"dry_run">> => true,
+                                      <<"lines_replaced">> => EndLine - StartLine + 1,
+                                      <<"new_lines_count">> => length(NewLines)};
+                                false ->
+                                    _ = create_backup_internal(PathStr),
+                                    case file:write_file(PathStr, NewContent) of
+                                        ok -> #{<<"success">> => true, <<"message">> => <<"File edited by line range">>,
+                                                <<"lines_replaced">> => EndLine - StartLine + 1};
+                                        {error, Reason} ->
+                                            restore_backup_internal(PathStr),
+                                            #{<<"success">> => false, <<"error">> => list_to_binary(file:format_error(Reason))}
+                                    end
+                            end
+                    end;
+                {error, Reason} ->
+                    #{<<"success">> => false, <<"error">> => list_to_binary(file:format_error(Reason))}
             end
     end;
 
@@ -222,5 +259,59 @@ cleanup_old_backups() ->
                     ToDelete = lists:sublist(Sorted, length(Sorted) - ?MAX_BACKUPS),
                     lists:foreach(fun(F) -> file:delete(F) end, ToDelete);
                 false -> ok
+            end
+    end.
+
+normalize_for_matching(Content) ->
+    Content1 = binary:replace(Content, <<"\r\n">>, <<"\n">>, [global]),
+    Content2 = binary:replace(Content1, <<"\r">>, <<"\n">>, [global]),
+    Content3 = binary:replace(Content2, <<"\t">>, <<"    ">>, [global]),
+    Lines = binary:split(Content3, <<"\n">>, [global]),
+    iolist_to_binary(lists:join(<<"\n">>, [strip_trailing_ws(L) || L <- Lines])).
+
+strip_trailing_ws(Line) ->
+    case re:run(Line, <<"^(.*\\S)?\\s*$">>, [{capture, [1], binary}]) of
+        {match, [Stripped]} -> Stripped;
+        _ -> <<>>
+    end.
+
+try_normalized_match(Content, OldStr, NewStr, Path, ReplaceAll, DryRun) ->
+    NormContent = normalize_for_matching(Content),
+    NormOld = normalize_for_matching(OldStr),
+    case coding_agent_tools:find_occurrences(binary_to_list(NormContent), binary_to_list(NormOld)) of
+        0 -> not_found;
+        Count when Count > 1 andalso ReplaceAll =/= true ->
+            {ok, #{<<"success">> => false, <<"error">> => iolist_to_binary(io_lib:format("Found ~b occurrences after normalization. Use replace_all to replace all.", [Count])),
+                   <<"match_type">> => <<"fuzzy">>}};
+        _ ->
+            NormNew = binary_to_list(NewStr),
+            apply_edit(NormContent, Path, Path, binary_to_list(NormOld), NormNew, ReplaceAll, DryRun)
+    end.
+
+apply_edit(Content, Path, PathStr, OldStrList, NewStrList, ReplaceAll, DryRun) ->
+    ContentStr = case is_binary(Content) of
+        true -> binary_to_list(Content);
+        false -> Content
+    end,
+    NewContent = case ReplaceAll of
+        true -> coding_agent_tools:replace_all(ContentStr, OldStrList, NewStrList);
+        false -> string:replace(ContentStr, OldStrList, NewStrList)
+    end,
+    case DryRun of
+        true ->
+            #{<<"success">> => true, <<"dry_run">> => true, <<"message">> => <<"Edit preview (not applied)">>};
+        false ->
+            _ = create_backup_internal(sanitize_path(PathStr)),
+            case file:write_file(sanitize_path(PathStr), list_to_binary(NewContent)) of
+                ok ->
+                    Result = #{<<"success">> => true, <<"message">> => <<"File edited successfully">>},
+                    coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
+                    coding_agent_tools:report_progress(<<"edit_file">>, <<"complete">>, #{path => Path}),
+                    Result;
+                {error, Reason} ->
+                    restore_backup_internal(sanitize_path(PathStr)),
+                    Result = #{<<"success">> => false, <<"error">> => list_to_binary(file:format_error(Reason))},
+                    coding_agent_tools:log_operation(<<"edit_file">>, Path, Result),
+                    Result
             end
     end.
