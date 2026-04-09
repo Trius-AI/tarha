@@ -310,3 +310,70 @@ execute_empty_tool_name_test() ->
 execute_hello_tool_test() ->
     ?assertMatch(#{<<"success">> := true, <<"message">> := <<"hello world">>},
                  coding_agent_tools:execute(<<"hello">>, #{})).
+
+%% ===================================================================
+%% Git tools — new tool dispatch
+%% ===================================================================
+git_stash_list_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_stash">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_stash_default_action_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_stash">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_remote_list_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_remote">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_remote_default_action_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_remote">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_tag_list_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_tag">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_pull_default_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_pull">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_push_no_force_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_push">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_push_force_blocked_test() ->
+    %% Force push should be blocked when safety callback rejects it
+    erlang:put(coding_agent_safety_cb, fun(_Op, _Args) -> skip end),
+    Result = coding_agent_tools_git:execute(<<"git_push">>, #{<<"force">> => true}),
+    erlang:erase(coding_agent_safety_cb),
+    ?assertMatch(#{<<"success">> := false}, Result).
+
+git_merge_no_branch_test() ->
+    Result = coding_agent_tools_git:execute(<<"git_merge">>, #{<<"branch">> => <<"nonexistent-branch-xyz">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+%% Dispatch tests — ensure new tools route through coding_agent_tools:execute/2
+git_stash_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_stash">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_remote_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_remote">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_tag_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_tag">>, #{<<"action">> => <<"list">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_pull_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_pull">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_push_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_push">>, #{}),
+    ?assertMatch(#{<<"success">> := true}, Result).
+
+git_merge_dispatch_test() ->
+    Result = coding_agent_tools:execute(<<"git_merge">>, #{<<"branch">> => <<"nonexistent-branch-xyz">>}),
+    ?assertMatch(#{<<"success">> := true}, Result).

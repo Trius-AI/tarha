@@ -316,7 +316,101 @@ tools() ->
                 }
             }
         },
-        % Build/Test Operations
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_stash">>,
+                <<"description">> => <<"Stash working directory changes (push, pop, list, or drop)">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"action">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Stash action: push, pop, list, or drop">>, <<"enum">> => [<<"push">>, <<"pop">>, <<"list">>, <<"drop">>]},
+                        <<"message">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Message for stash push">>}
+                    },
+                    <<"required">> => [<<"action">>]
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_pull">>,
+                <<"description">> => <<"Pull changes from a remote repository">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"remote">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Remote name (default: origin)">>},
+                        <<"branch">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Branch to pull (default: current)">>},
+                        <<"rebase">> => #{<<"type">> => <<"boolean">>, <<"description">> => <<"Use rebase instead of merge (default: false)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_push">>,
+                <<"description">> => <<"Push commits to a remote repository">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"remote">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Remote name (default: origin)">>},
+                        <<"branch">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Branch to push (default: current)">>},
+                        <<"force">> => #{<<"type">> => <<"boolean">>, <<"description">> => <<"Force push (requires safety check, default: false)">>}
+                    },
+                    <<"required">> => []
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_tag">>,
+                <<"description">> => <<"Create, list, or delete git tags">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"action">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Tag action: create, list, or delete">>, <<"enum">> => [<<"create">>, <<"list">>, <<"delete">>]},
+                        <<"name">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Tag name (required for create/delete)">>},
+                        <<"message">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Annotated tag message (optional, for create)">>}
+                    },
+                    <<"required">> => [<<"action">>]
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_merge">>,
+                <<"description">> => <<"Merge a branch into the current branch">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"branch">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Branch to merge">>},
+                        <<"squash">> => #{<<"type">> => <<"boolean">>, <<"description">> => <<"Squash merge (default: false)">>},
+                        <<"message">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Commit message for squash merge">>}
+                    },
+                    <<"required">> => [<<"branch">>]
+                }
+            }
+        },
+        #{
+            <<"type">> => <<"function">>,
+            <<"function">> => #{
+                <<"name">> => <<"git_remote">>,
+                <<"description">> => <<"Manage git remotes (list, add, or remove)">>,
+                <<"parameters">> => #{
+                    <<"type">> => <<"object">>,
+                    <<"properties">> => #{
+                        <<"action">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Remote action: list, add, or remove">>, <<"enum">> => [<<"list">>, <<"add">>, <<"remove">>]},
+                        <<"name">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Remote name (required for add/remove)">>},
+                        <<"url">> => #{<<"type">> => <<"string">>, <<"description">> => <<"Remote URL (required for add)">>}
+                    },
+                    <<"required">> => [<<"action">>]
+                }
+            }
+        },
         #{
             <<"type">> => <<"function">>,
             <<"function">> => #{
@@ -922,6 +1016,12 @@ execute(<<"git_log">>, Args) -> coding_agent_tools_git:execute(<<"git_log">>, Ar
 execute(<<"git_add">>, Args) -> coding_agent_tools_git:execute(<<"git_add">>, Args);
 execute(<<"git_commit">>, Args) -> coding_agent_tools_git:execute(<<"git_commit">>, Args);
 execute(<<"git_branch">>, Args) -> coding_agent_tools_git:execute(<<"git_branch">>, Args);
+execute(<<"git_stash">>, Args) -> coding_agent_tools_git:execute(<<"git_stash">>, Args);
+execute(<<"git_pull">>, Args)  -> coding_agent_tools_git:execute(<<"git_pull">>, Args);
+execute(<<"git_push">>, Args)  -> coding_agent_tools_git:execute(<<"git_push">>, Args);
+execute(<<"git_tag">>, Args)    -> coding_agent_tools_git:execute(<<"git_tag">>, Args);
+execute(<<"git_merge">>, Args)  -> coding_agent_tools_git:execute(<<"git_merge">>, Args);
+execute(<<"git_remote">>, Args) -> coding_agent_tools_git:execute(<<"git_remote">>, Args);
 
 % Search Operations -> coding_agent_tools_search
 execute(<<"grep_files">>, Args) -> coding_agent_tools_search:execute(<<"grep_files">>, Args);
