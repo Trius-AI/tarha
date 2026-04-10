@@ -59,10 +59,8 @@ erl_crash.dump
 rebar3.crashdump
 
 # Generated files
-.tarha/backups/
-.tarha/reports/
-.tarha/sessions/
-.tarha/history
+.tarha/
+__plans/
 dump.txt
 
 # Test/temp files
