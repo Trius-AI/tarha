@@ -1244,7 +1244,7 @@ process_message(SessionId, History, Input, Mode, RetryCount) when RetryCount >= 
     io:format("~n" ++ coding_agent_ansi:bright_red("Max retries exceeded. Please try again.") ++ "~n"),
     {continue, History, Mode};
 process_message(SessionId, History, Input, Mode, RetryCount) ->
-    Message = list_to_binary(Input),
+    Message = unicode:characters_to_binary(Input, utf8),
     NewHistory = [Input | History],
     
     % Get mode-specific system prompt
