@@ -1333,7 +1333,7 @@ process_message(SessionId, History, Input, Mode, RetryCount) ->
     EnrichedMessage = iolist_to_binary([ModeContext, Message]),
     
     try
-        io:format("~s", [coding_agent_ansi:dim("  Waiting for response...~n")]),
+        io:format("~s~n", [coding_agent_ansi:dim("  Waiting for response...")]),
         StreamCb = fun stream_callback/3,
         case coding_agent_session:ask_stream(SessionId, EnrichedMessage, StreamCb) of
                 {ok, Response, _Thinking} ->
