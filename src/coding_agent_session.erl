@@ -14,29 +14,40 @@
 -record(state, {
     id :: binary(),
     model :: binary(),
-    context_length :: integer(),      % Model's max context window (from Ollama API)
+    context_length :: integer(),
     messages :: list(),
     working_dir :: string(),
-    open_files :: #{binary() => binary()},  % Path => Content cache
-    prompt_tokens :: integer(),      % Actual tokens from API
-    completion_tokens :: integer(),  % Actual tokens from API  
-    estimated_tokens :: integer(),    % Estimated when API doesn't provide counts
+    open_files :: #{binary() => binary()},
+    prompt_tokens :: integer(),
+    completion_tokens :: integer(),
+    estimated_tokens :: integer(),
     tool_calls :: integer(),
-    busy :: boolean(),                % Whether session is processing a request
-    ephemeral :: boolean()            % If true, skip persistence and archiving
+    budget_used :: integer(),
+    budget_limit :: integer(),
+    tool_calls_remaining :: integer(),
+    tool_calls_limit :: integer(),
+    busy :: boolean(),
+    ephemeral :: boolean()
 }).
 
 -define(MAX_ITERATIONS, 100).
--define(MAX_HISTORY, 50).  % Reduced from 100 - tool calls use lots of context
--define(MAX_HISTORY_SIZE, 100000).  % 100KB max history in bytes
--define(MAX_TOOL_RESULT_SIZE, 50000).  % 50KB max per tool result - increased to avoid re-reads
--define(MAX_TOTAL_RESULTS, 100000).     % 100KB total for all results in one turn
--define(DEFAULT_CONTEXT_LENGTH, 32768).  % Default if model info unavailable
--define(CONTEXT_USAGE_THRESHOLD, 0.85).  % Compact at 85% context usage
--define(COMPACTION_THRESHOLD, 150000).  % ~50KB tokens
--define(KEEP_RECENT_MESSAGES, 10).       % Messages to keep intact during compaction
--define(SUMMARIZE_TIMEOUT, 30000).       % 30s timeout for summarization LLM call
+-define(MAX_HISTORY, 50).
+-define(MAX_HISTORY_SIZE, 100000).
+-define(MAX_TOOL_RESULT_SIZE, 50000).
+-define(MAX_TOTAL_RESULTS, 100000).
+-define(DEFAULT_CONTEXT_LENGTH, 32768).
+-define(CONTEXT_USAGE_THRESHOLD, 0.85).
+-define(MICROCOMPACT_THRESHOLD, 0.70).
+-define(COLLAPSE_THRESHOLD, 0.95).
+-define(COMPACTION_THRESHOLD, 150000).
+-define(KEEP_RECENT_MESSAGES, 10).
+-define(MICROCOMPACT_KEEP_MESSAGES, 20).
+-define(COLLAPSE_KEEP_MESSAGES, 5).
+-define(SUMMARIZE_TIMEOUT, 30000).
 -define(ARCHIVE_DIR, ".tarha/sessions").
+-define(DEFAULT_BUDGET_LIMIT, 0).
+-define(DEFAULT_TOOL_CALLS_LIMIT, 0).
+-define(BUDGET_WARN_PERCENT, 80).
 -define(CRASH_DIR, ".tarha/reports").
 -define(MAX_TOOL_RETRIES, 3).
 -define(SESSIONS_TABLE, coding_agent_sessions).
@@ -334,6 +345,8 @@ init([Id, WorkingDir]) ->
         true -> ok;
         false -> ets:insert(?SESSIONS_TABLE, {Id2, self()})
     end,
+    BudgetLimit = application:get_env(coding_agent, budget_limit, ?DEFAULT_BUDGET_LIMIT),
+    ToolCallsLimit = application:get_env(coding_agent, tool_calls_limit, ?DEFAULT_TOOL_CALLS_LIMIT),
     process_flag(trap_exit, true),
     {ok, #state{
         id = Id2,
@@ -346,97 +359,25 @@ init([Id, WorkingDir]) ->
         completion_tokens = 0,
         estimated_tokens = 0,
         tool_calls = 0,
+        budget_used = 0,
+        budget_limit = BudgetLimit,
+        tool_calls_remaining = ToolCallsLimit,
+        tool_calls_limit = ToolCallsLimit,
         busy = false,
         ephemeral = IsEphemeral
     }}.
 
-handle_call({ask, Message, _Opts}, _From, State = #state{model = Model, messages = History, working_dir = WD, id = Id, open_files = OpenFiles}) ->
-    MsgBin = iolist_to_binary(Message),
-    WDBin = list_to_binary(WD),
-    
-    % Build file context from open files
-    FileContext = build_file_context(OpenFiles),
-    
-    % Get memory context
-    MemoryContext = get_memory_context(),
-    
-    % Get skills context
-    SkillsContext = get_skills_context(),
-    
-    % Get AGENTS.md context
-    AgentsContext = get_agents_context(),
-    
-    % Check for recent crashes (self-healing)
-    CrashContext = get_recent_crash_context(),
-    
-    % Build system prompt with all context sections
-    ContextParts = [],
-    
-    % Base prompt
-    BasePrompt = <<?SYSTEM_PROMPT/binary, "\n\nCurrent working directory: ", WDBin/binary, "\nSession ID: ", Id/binary>>,
-    
-    % Add AGENTS.md if present
-    WithAgents = case AgentsContext of
-        <<>> -> BasePrompt;
-        _ -> <<BasePrompt/binary, "\n\n# Project Context (AGENTS.md)\n\n", AgentsContext/binary>>
-    end,
-    
-    % Add memory if present
-    WithMemory = case MemoryContext of
-        <<>> -> WithAgents;
-        _ -> <<WithAgents/binary, "\n\n", MemoryContext/binary>>
-    end,
-    
-    % Add skills if present (only summary, not full content)
-    WithSkills = case SkillsContext of
-        <<>> -> WithMemory;
-        _ -> <<WithMemory/binary, "\n\n# Available Skills\n\nSkills are available. Use read_file on skill's SKILL.md to load full instructions.\n\n", SkillsContext/binary>>
-    end,
-    
-    % Add open files if present
-    WithFiles = case FileContext of
-        <<>> -> WithSkills;
-        _ -> <<WithSkills/binary, "\n\nOpen files (cached in context):\n", FileContext/binary>>
-    end,
-    
-    % Add crash report if recent crash detected (self-healing)
-    SystemContent = case CrashContext of
-        <<>> -> WithFiles;
-        _ -> <<WithFiles/binary, "\n\n", ?HEAL_PROMPT/binary, "\n\n", CrashContext/binary>>
-    end,
-    
-    SystemMsg = #{<<"role">> => <<"system">>, <<"content">> => SystemContent},
-    UserMsg = #{<<"role">> => <<"user">>, <<"content">> => MsgBin},
-    ExistingHistory = strip_system_messages(trim_history(History)),
-    Messages = [SystemMsg | ExistingHistory] ++ [UserMsg],
-    
-    case run_agent_loop(Model, Messages, 0, OpenFiles, Id) of
-        {ok, Response, Thinking, NewHistory, FinalOpenFiles, TokenInfo} ->
-            FinalHistory = strip_system_messages(trim_history(NewHistory)),
-            ReplyHistory = [{maps:get(<<"role">>, M), maps:get(<<"content">>, M, <<"">>)} || M <- lists:sublist(FinalHistory, 2, length(FinalHistory))],
-            
-            %% Extract token counts
-            PromptUsed = maps:get(prompt_tokens, TokenInfo, 0),
-            CompletionUsed = maps:get(completion_tokens, TokenInfo, 0),
-            EstimatedUsed = maps:get(estimated_tokens, TokenInfo, 0),
-            
-            NewState = State#state{
-                messages = FinalHistory,
-                open_files = FinalOpenFiles,
-                prompt_tokens = State#state.prompt_tokens + PromptUsed,
-                completion_tokens = State#state.completion_tokens + CompletionUsed,
-                estimated_tokens = State#state.estimated_tokens + EstimatedUsed,
-                tool_calls = State#state.tool_calls + 1
-            },
-            % Check if consolidation needed (async)
-            maybe_trigger_consolidation(),
-            % Check if compaction needed
-            CompactedState = maybe_compact_session(NewState),
-            % Auto-save session (async)
-            maybe_save_session(CompactedState),
-            {reply, {ok, Response, Thinking, ReplyHistory}, CompactedState};
-        {error, Reason} ->
-            {reply, {error, Reason}, State}
+handle_call({ask, Message, _Opts}, _From, State) ->
+    case check_budget_exceeded(State) of
+        true ->
+            {reply, {error, budget_exceeded}, State};
+        false ->
+            case check_tool_budget_exceeded(State) of
+                true ->
+                    {reply, {error, tool_budget_exceeded}, State};
+                false ->
+                    do_ask(Message, State)
+            end
     end;
 
 handle_call(history, _From, State = #state{messages = Messages}) ->
@@ -451,13 +392,20 @@ handle_call({close_file, Path}, _From, State = #state{open_files = OpenFiles}) -
     NewOpenFiles = maps:remove(PathBin, OpenFiles),
     {reply, ok, State#state{open_files = NewOpenFiles}};
 
-handle_call(stats, _From, State = #state{prompt_tokens = PromptTokens, completion_tokens = CompletionTokens, estimated_tokens = EstimatedTokens, tool_calls = Calls, context_length = ContextLength, model = Model}) ->
-    %% Get global token stats from Ollama client
+handle_call(stats, _From, State = #state{prompt_tokens = PromptTokens, completion_tokens = CompletionTokens, estimated_tokens = EstimatedTokens, tool_calls = Calls, context_length = ContextLength, model = Model, budget_used = BudgetUsed, budget_limit = BudgetLimit, tool_calls_remaining = ToolCallsRemaining, tool_calls_limit = ToolCallsLimit, messages = Messages}) ->
     GlobalStats = coding_agent_ollama:get_token_stats(),
     SessionTotal = PromptTokens + CompletionTokens + EstimatedTokens,
-    %% Calculate context usage percentage
     UsagePercent = case ContextLength > 0 of
         true -> (SessionTotal / ContextLength) * 100;
+        false -> 0.0
+    end,
+    BudgetPercent = case BudgetLimit > 0 of
+        true -> (BudgetUsed / BudgetLimit) * 100;
+        false -> 0.0
+    end,
+    ToolCallsUsed = ToolCallsLimit - ToolCallsRemaining,
+    ToolCallsPercent = case ToolCallsLimit > 0 of
+        true -> (ToolCallsUsed / ToolCallsLimit) * 100;
         false -> 0.0
     end,
     {reply, {ok, #{
@@ -466,13 +414,21 @@ handle_call(stats, _From, State = #state{prompt_tokens = PromptTokens, completio
         <<"session_estimated_tokens">> => EstimatedTokens,
         <<"session_total_tokens">> => SessionTotal,
         <<"context_length">> => ContextLength,
-        <<"context_usage_percent">> => round(UsagePercent * 10) / 10,  % 1 decimal
+        <<"context_usage_percent">> => round(UsagePercent * 10) / 10,
         <<"tool_calls">> => Calls,
-        <<"message_count">> => length(State#state.messages),
+        <<"message_count">> => length(Messages),
         <<"model">> => Model,
         <<"global_prompt_tokens">> => maps:get(prompt_tokens, GlobalStats, 0),
         <<"global_completion_tokens">> => maps:get(completion_tokens, GlobalStats, 0),
-        <<"global_estimated_tokens">> => maps:get(estimated_tokens, GlobalStats, 0)
+        <<"global_estimated_tokens">> => maps:get(estimated_tokens, GlobalStats, 0),
+        <<"budget_used">> => BudgetUsed,
+        <<"budget_limit">> => BudgetLimit,
+        <<"budget_percent">> => round(BudgetPercent * 10) / 10,
+        <<"budget_warning">> => BudgetLimit > 0 andalso BudgetUsed > (BudgetLimit * 80 div 100),
+        <<"tool_calls_remaining">> => ToolCallsRemaining,
+        <<"tool_calls_limit">> => ToolCallsLimit,
+        <<"tool_calls_used">> => ToolCallsUsed,
+        <<"tool_calls_percent">> => round(ToolCallsPercent * 10) / 10
     }}, State};
 
 handle_call(clear, _From, State) ->
@@ -1062,22 +1018,81 @@ strip_frontmatter(Content) when is_binary(Content) ->
     end;
 strip_frontmatter(Content) -> Content.
 
+check_budget_warning(#state{budget_used = Used, budget_limit = Limit}) ->
+    Limit > 0 andalso (Used * 100) > (Limit * ?BUDGET_WARN_PERCENT).
+
+check_budget_exceeded(#state{budget_used = Used, budget_limit = Limit}) ->
+    Limit > 0 andalso Used >= Limit.
+
+check_tool_budget_exceeded(#state{tool_calls_remaining = Remaining, tool_calls_limit = Limit}) ->
+    Limit > 0 andalso Remaining =< 0.
+
+is_system_message(Msg) ->
+    maps:get(<<"role">>, Msg, undefined) =:= <<"system">>.
+
+split_system_messages(Messages) ->
+    lists:partition(fun is_system_message/1, Messages).
+
 %% Session compaction - summarize and archive old context
 %% Uses model's context_length from Ollama API for smarter compaction
+%% Three-level compaction: microcompact -> compact -> collapse
 maybe_compact_session(State = #state{prompt_tokens = PT, completion_tokens = CT, estimated_tokens = ET, context_length = ContextLength}) ->
     TotalTokens = PT + CT + ET,
-    %% Calculate threshold based on context length
-    Threshold = case ContextLength > 0 of
-        true -> round(ContextLength * ?CONTEXT_USAGE_THRESHOLD);
-        false -> ?COMPACTION_THRESHOLD  % Fallback
+    Ratio = case ContextLength > 0 of
+        true -> TotalTokens / ContextLength;
+        false -> TotalTokens / ?COMPACTION_THRESHOLD
     end,
-    case TotalTokens > Threshold of
-        true -> 
-            io:format("[session] Context ~p/~p tokens (~p%), triggering compaction~n", 
-                      [TotalTokens, ContextLength, round((TotalTokens / ContextLength) * 100)]),
+    if
+        Ratio > ?COLLAPSE_THRESHOLD ->
+            io:format("[session] Context ratio ~.2f exceeds collapse threshold, collapsing~n", [Ratio]),
+            collapse_session(State);
+        Ratio > ?CONTEXT_USAGE_THRESHOLD ->
+            io:format("[session] Context ratio ~.2f exceeds compaction threshold, compacting~n", [Ratio]),
             compact_session(State);
-        false -> 
+        Ratio > ?MICROCOMPACT_THRESHOLD ->
+            io:format("[session] Context ratio ~.2f exceeds microcompact threshold~n", [Ratio]),
+            microcompact_session(State);
+        true ->
             State
+    end.
+
+microcompact_session(State = #state{id = Id, messages = Messages}) ->
+    {SystemMsgs, NonSystemMsgs} = split_system_messages(Messages),
+    KeepCount = ?MICROCOMPACT_KEEP_MESSAGES,
+    case length(NonSystemMsgs) =< KeepCount of
+        true -> State;
+        false ->
+            Dropped = length(NonSystemMsgs) - KeepCount,
+            RecentNonSystem = lists:nthtail(Dropped, NonSystemMsgs),
+            NewMessages = SystemMsgs ++ RecentNonSystem,
+            io:format("[session] Microcompacted ~s: dropped ~p oldest non-system messages~n", [Id, Dropped]),
+            State#state{messages = NewMessages}
+    end.
+
+collapse_session(State = #state{id = Id, messages = Messages, model = Model}) ->
+    {SystemMsgs, NonSystemMsgs} = split_system_messages(Messages),
+    KeepCount = ?COLLAPSE_KEEP_MESSAGES,
+    case length(NonSystemMsgs) =< KeepCount of
+        true -> State;
+        false ->
+            Dropped = length(NonSystemMsgs) - KeepCount,
+            DroppedMsgs = lists:sublist(NonSystemMsgs, Dropped),
+            RecentMsgs = lists:nthtail(Dropped, NonSystemMsgs),
+            CollapseNotice = case summarize_messages_with_timeout(DroppedMsgs, Model, ?SUMMARIZE_TIMEOUT) of
+                {ok, Summary} ->
+                    #{
+                        <<"role">> => <<"user">>,
+                        <<"content">> => <<"[Emergency context collapse — summarized earlier conversation]\n", Summary/binary>>
+                    };
+                {error, _} ->
+                    #{
+                        <<"role">> => <<"user">>,
+                        <<"content">> => <<"[Emergency context collapse — ", (integer_to_binary(Dropped))/binary, " messages dropped]">>
+                    }
+            end,
+            NewMessages = SystemMsgs ++ [CollapseNotice | RecentMsgs],
+            io:format("[session] Collapsed ~s: emergency drainage, kept ~p recent messages~n", [Id, KeepCount]),
+            State#state{messages = NewMessages}
     end.
 
 compact_session(State = #state{id = Id, messages = Messages, model = Model, 
@@ -1299,3 +1314,67 @@ list_saved_sessions() ->
 
 delete_saved_session(SessionId) ->
     coding_agent_session_store:delete_session(SessionId).
+
+do_ask(Message, State = #state{model = Model, messages = History, working_dir = WD, id = Id, open_files = OpenFiles}) ->
+    MsgBin = iolist_to_binary(Message),
+    WDBin = list_to_binary(WD),
+    FileContext = build_file_context(OpenFiles),
+    MemoryContext = get_memory_context(),
+    SkillsContext = get_skills_context(),
+    AgentsContext = get_agents_context(),
+    CrashContext = get_recent_crash_context(),
+    BasePrompt = <<?SYSTEM_PROMPT/binary, "\n\nCurrent working directory: ", WDBin/binary, "\nSession ID: ", Id/binary>>,
+    WithAgents = case AgentsContext of
+        <<>> -> BasePrompt;
+        _ -> <<BasePrompt/binary, "\n\n# Project Context (AGENTS.md)\n\n", AgentsContext/binary>>
+    end,
+    WithMemory = case MemoryContext of
+        <<>> -> WithAgents;
+        _ -> <<WithAgents/binary, "\n\n", MemoryContext/binary>>
+    end,
+    WithSkills = case SkillsContext of
+        <<>> -> WithMemory;
+        _ -> <<WithMemory/binary, "\n\n# Available Skills\n\nSkills are available. Use read_file on skill's SKILL.md to load full instructions.\n\n", SkillsContext/binary>>
+    end,
+    WithFiles = case FileContext of
+        <<>> -> WithSkills;
+        _ -> <<WithSkills/binary, "\n\nOpen files (cached in context):\n", FileContext/binary>>
+    end,
+    SystemContent = case CrashContext of
+        <<>> -> WithFiles;
+        _ -> <<WithFiles/binary, "\n\n", ?HEAL_PROMPT/binary, "\n\n", CrashContext/binary>>
+    end,
+    SystemMsg = #{<<"role">> => <<"system">>, <<"content">> => SystemContent},
+    UserMsg = #{<<"role">> => <<"user">>, <<"content">> => MsgBin},
+    ExistingHistory = strip_system_messages(trim_history(History)),
+    Messages = [SystemMsg | ExistingHistory] ++ [UserMsg],
+    case run_agent_loop(Model, Messages, 0, OpenFiles, Id) of
+        {ok, Response, Thinking, NewHistory, FinalOpenFiles, TokenInfo} ->
+            FinalHistory = strip_system_messages(trim_history(NewHistory)),
+            ReplyHistory = [{maps:get(<<"role">>, M), maps:get(<<"content">>, M, <<"">>)} || M <- lists:sublist(FinalHistory, 2, length(FinalHistory))],
+            PromptUsed = maps:get(prompt_tokens, TokenInfo, 0),
+            CompletionUsed = maps:get(completion_tokens, TokenInfo, 0),
+            EstimatedUsed = maps:get(estimated_tokens, TokenInfo, 0),
+            NewState = State#state{
+                messages = FinalHistory,
+                open_files = FinalOpenFiles,
+                prompt_tokens = State#state.prompt_tokens + PromptUsed,
+                completion_tokens = State#state.completion_tokens + CompletionUsed,
+                estimated_tokens = State#state.estimated_tokens + EstimatedUsed,
+                tool_calls = State#state.tool_calls + 1,
+                budget_used = State#state.budget_used + PromptUsed + CompletionUsed + EstimatedUsed,
+                tool_calls_remaining = max(State#state.tool_calls_remaining - 1, 0)
+            },
+            case check_budget_warning(NewState) of
+                true when State#state.budget_limit > 0 ->
+                    BudgetPct = (NewState#state.budget_used * 100) div State#state.budget_limit,
+                    io:format("[session] WARNING: Budget usage at ~p%~n", [BudgetPct]);
+                _ -> ok
+            end,
+            maybe_trigger_consolidation(),
+            CompactedState = maybe_compact_session(NewState),
+            maybe_save_session(CompactedState),
+            {reply, {ok, Response, Thinking, ReplyHistory}, CompactedState};
+        {error, Reason} ->
+            {reply, {error, Reason}, State}
+    end.
