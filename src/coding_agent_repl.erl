@@ -201,10 +201,11 @@ get_mode_indicator(meticulous) ->
 loop(SessionId, History, Mode) ->
     Prompt = get_mode_prompt(Mode),
     flush_pending_output(),
-    % Use line editor with history support
-    case coding_agent_line_editor:read_line(Prompt, History) of
+    io:format("~ts", [Prompt]),
+    case file:read_line(standard_io) of
         {ok, Line} ->
-            Input = sanitize_input(Line),
+            Trimmed = string:trim(Line, trailing, "\n\r"),
+            Input = sanitize_input(Trimmed),
             case Input of
                 "" -> 
                     ?MODULE:loop(SessionId, History, Mode);
@@ -219,7 +220,7 @@ loop(SessionId, History, Mode) ->
                             ok
                     end
             end;
-        {error, eof} ->
+        eof ->
             io:format("~n~s~n", [coding_agent_ansi:bright_cyan("Goodbye!")]),
             save_history(History),
             ok;
