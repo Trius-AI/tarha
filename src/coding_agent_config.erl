@@ -54,7 +54,10 @@ apply_env_overrides() ->
     end,
     case os:getenv("TARHA_MAX_ITERATIONS") of
         false -> ok;
-        MaxIter -> application:set_env(coding_agent, max_iterations, list_to_integer(MaxIter))
+        MaxIter -> 
+            try application:set_env(coding_agent, max_iterations, list_to_integer(MaxIter))
+            catch error:badarg -> ok
+            end
     end,
     case os:getenv("TARHA_WORKSPACE") of
         false -> ok;
@@ -251,7 +254,10 @@ ollama_model() ->
 max_iterations() ->
     case os:getenv("TARHA_MAX_ITERATIONS") of
         false -> application:get_env(coding_agent, max_iterations, 100);
-        Val -> list_to_integer(Val)
+        Val -> 
+            try list_to_integer(Val)
+            catch error:badarg -> application:get_env(coding_agent, max_iterations, 100)
+            end
     end.
 
 -spec sessions_dir() -> string().

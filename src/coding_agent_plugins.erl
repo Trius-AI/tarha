@@ -207,7 +207,13 @@ load_plugin_from_dir(Dir) ->
                     Other -> shell
                 end,
                 Command = binary_to_list(maps:get(<<"command">>, Decoded, <<>>)),
-                ModuleName = binary_to_existing_atom(maps:get(<<"module">>, Decoded, <<"">>), utf8),
+                ModuleName = case maps:get(<<"module">>, Decoded, <<"">>) of
+                    <<>> -> undefined;
+                    ModBin ->
+                        try binary_to_existing_atom(ModBin, utf8)
+                        catch error:badarg -> undefined
+                        end
+                end,
                 FunctionName = binary_to_atom(maps:get(<<"function">>, Decoded, <<"handle_tool">>), utf8),
                 Url = binary_to_list(maps:get(<<"url">>, Decoded, <<>>)),
                 Headers = maps:get(<<"headers">>, Decoded, #{}),

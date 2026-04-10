@@ -81,19 +81,37 @@ get_module_info(Pid, FilePath) ->
 find_definition(Pid, FunName) when is_atom(FunName) ->
     gen_server:call(Pid, {find_definition, FunName}, 10000);
 find_definition(Pid, FunName) when is_binary(FunName) ->
-    find_definition(Pid, binary_to_existing_atom(FunName, utf8)).
+    case safe_binary_to_existing_atom(FunName) of
+        {ok, Atom} -> find_definition(Pid, Atom);
+        {error, _} -> {ok, []}
+    end.
 
 %% @doc Find all references to a module/function
 find_references(Pid, FunName) when is_atom(FunName) ->
     gen_server:call(Pid, {find_references, FunName}, 10000);
 find_references(Pid, FunName) when is_binary(FunName) ->
-    find_references(Pid, binary_to_existing_atom(FunName, utf8)).
+    case safe_binary_to_existing_atom(FunName) of
+        {ok, Atom} -> find_references(Pid, Atom);
+        {error, _} -> {ok, []}
+    end.
 
 %% @doc Find all callers of a module
 get_callers(Pid, Module) when is_atom(Module) ->
     gen_server:call(Pid, {get_callers, Module}, 10000);
 get_callers(Pid, Module) when is_binary(Module) ->
-    get_callers(Pid, binary_to_existing_atom(Module, utf8)).
+    case safe_binary_to_existing_atom(Module) of
+        {ok, Atom} -> get_callers(Pid, Atom);
+        {error, _} -> {ok, []}
+    end.
+
+%% @doc Safely convert binary to existing atom
+safe_binary_to_existing_atom(Binary) when is_binary(Binary) ->
+    try binary_to_existing_atom(Binary, utf8) of
+        Atom -> {ok, Atom}
+    catch
+        error:badarg -> {error, not_found}
+    end;
+safe_binary_to_existing_atom(_) -> {error, invalid_input}.
 
 %%===================================================================
 %% gen_server callbacks
@@ -416,7 +434,12 @@ parse_fun_list(Bin) ->
     Parts = binary:split(Bin, <<",">>, [global, trim_all]),
     lists:filtermap(fun(Part) ->
         case re:run(Part, "\\s*([a-z_][a-zA-Z0-9_@]*)\\s*/\\s*([0-9]+)\\s*", [{capture, [1, 2], binary}]) of
-            {match, [Name, Arity]} -> {true, {binary_to_atom(Name, utf8), binary_to_integer(Arity)}};
+            {match, [Name, Arity]} ->
+                try
+                    {true, {binary_to_atom(Name, utf8), binary_to_integer(Arity)}}
+                catch
+                    error:badarg -> false
+                end;
             _ -> false
         end
     end, Parts).

@@ -835,13 +835,26 @@ execute_single_tool(#{<<"function">> := #{<<"name">> := Name, <<"arguments">> :=
             end,
             io:format(" ~s~n", [ArgPreview])
     end,
-    Result = coding_agent_tools:execute(Name, Args),
+    Result = try coding_agent_tools:execute(Name, Args) of
+        #{<<"success">> := _} = R -> R;
+        Other -> #{<<"success">> => false, <<"error">> => iolist_to_binary(io_lib:format("Unexpected result: ~p", [Other]))}
+    catch
+        error:badarg ->
+            #{<<"success">> => false, <<"error">> => <<"badarg: Invalid argument in tool call">>};
+        error:Reason:Stacktrace ->
+            StackBin = iolist_to_binary(io_lib:format("~p", [Stacktrace])),
+            #{<<"success">> => false, <<"error">> => iolist_to_binary([atom_to_binary(Reason, utf8), <<": ">>, StackBin])};
+        exit:Reason ->
+            #{<<"success">> => false, <<"error">> => iolist_to_binary(io_lib:format("exit: ~p", [Reason]))};
+        throw:Reason ->
+            #{<<"success">> => false, <<"error">> => iolist_to_binary(io_lib:format("throw: ~p", [Reason]))}
+    end,
     
     % Cache file content if it was read successfully
     CachedResult = case Name of
         <<"read_file">> ->
             case Result of
-                #{<<"success">> := true, <<"content">> := Content} ->
+                #{<<"success">> := true, <<"content">> := _Content} ->
                     Path = maps:get(<<"path">>, Args),
                     Result#{<<"file_cached">> => Path};
                 _ -> Result

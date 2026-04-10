@@ -78,10 +78,14 @@ execute(<<"get_callers">>, Args) ->
             get_callers_grep(Module, Function);
         Pid when is_pid(Pid) ->
             try
-                ModAtom = binary_to_existing_atom(Module, utf8),
-                {ok, Callers} = coding_agent_index:get_callers(Pid, ModAtom),
-                iolist_to_binary([[list_to_binary(F), <<"::">>, integer_to_binary(L), <<"\n">>]
-                                 || {F, L} <- Callers])
+                case safe_binary_to_existing_atom(Module) of
+                    {ok, ModAtom} ->
+                        {ok, Callers} = coding_agent_index:get_callers(Pid, ModAtom),
+                        iolist_to_binary([[list_to_binary(F), <<"::">>, integer_to_binary(L), <<"\n">>]
+                                         || {F, L} <- Callers]);
+                    {error, _} ->
+                        get_callers_grep(Module, Function)
+                end
             catch _:_ ->
                 get_callers_grep(Module, Function)
             end
@@ -94,6 +98,17 @@ execute(<<"get_callers">>, Args) ->
 
     coding_agent_tools:report_progress(<<"get_callers">>, <<"complete">>, #{count => Count}),
     #{<<"success">> => true, <<"callers">> => LimitedResult, <<"module">> => Module, <<"count">> => Count}.
+
+%% Internal helpers
+
+%% @doc Safely convert binary to existing atom
+safe_binary_to_existing_atom(Binary) when is_binary(Binary) ->
+    try binary_to_existing_atom(Binary, utf8) of
+        Atom -> {ok, Atom}
+    catch
+        error:badarg -> {error, not_found}
+    end;
+safe_binary_to_existing_atom(_) -> {error, not_found}.
 
 %% Internal helpers
 

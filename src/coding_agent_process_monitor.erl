@@ -164,6 +164,9 @@ gather_memory_status() ->
                     heap_size => Heap,
                     name => process_to_name(Pid)
                 }};
+            undefined ->
+                % Process no longer exists
+                false;
             _ -> false
         end
     end, Processes),
@@ -271,6 +274,11 @@ flush_process_messages(Pid) ->
             % Too many messages - process might be stuck
             io:format("[memory] Process ~p has ~p queued messages, killing~n", [Pid, N]),
             exit(Pid, kill);
+        {message_queue_len, _} ->
+            ok;
+        undefined ->
+            % Process no longer exists
+            ok;
         _ ->
             ok
     end.
@@ -337,6 +345,9 @@ trim_binary_heaps() ->
         case erlang:process_info(Pid, binary) of
             {binary, Binaries} when length(Binaries) > 10 ->
                 erlang:garbage_collect(Pid);
+            undefined ->
+                % Process no longer exists
+                ok;
             _ -> ok
         end
     end || Pid <- Processes],
@@ -346,10 +357,15 @@ do_gc(all) ->
     erlang:garbage_collect(),
     {ok, erlang:memory(total)};
 do_gc(Pids) when is_list(Pids) ->
-    [erlang:garbage_collect(Pid) || Pid <- Pids],
+    [catch erlang:garbage_collect(Pid) || Pid <- Pids],
     {ok, erlang:memory(total)};
 do_gc(Pid) when is_pid(Pid) ->
-    erlang:garbage_collect(Pid),
+    try erlang:garbage_collect(Pid) of
+        true -> ok;
+        false -> ok
+    catch
+        error:badarg -> ok  % Process no longer exists
+    end,
     {ok, erlang:memory(total)};
 do_gc(_) ->
     {error, invalid_gc_target}.

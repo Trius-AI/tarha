@@ -234,7 +234,13 @@ extract_exports(Content) ->
             AllExports = iolist_to_binary([C || [C] <- Captures, C =/= <<>>]),
             case re:run(AllExports, "([a-z][a-zA-Z0-9_@]*)/(\d+)", [global, {capture, [1, 2], binary}]) of
                 {match, FuncCaptures} ->
-                    [{Name, list_to_integer(binary_to_list(Arity))} || [Name, Arity] <- FuncCaptures];
+                    lists:filtermap(fun([Name, Arity]) ->
+                        try
+                            {true, {Name, list_to_integer(binary_to_list(Arity))}}
+                        catch
+                            error:badarg -> false
+                        end
+                    end, FuncCaptures);
                 _ -> []
             end;
         _ -> []

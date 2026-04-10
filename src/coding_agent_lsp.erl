@@ -136,6 +136,9 @@ search_fun_in_index(Pid, Word) ->
                   line => DefLine, symbol => Word, locations => format_locations(Locations)}
         end
     catch
+        error:badarg ->
+            %% Symbol doesn't exist as an atom, can't find definition
+            #{found => false, symbol => Word};
         _:_ -> #{found => false, symbol => Word}
     end.
 
@@ -185,7 +188,11 @@ parse_grep_output(Output) ->
     lists:filtermap(fun(Line) ->
         case re:run(Line, "^([^:]+):([0-9]+):", [{capture, [1, 2], binary}]) of
             {match, [File, LineNum]} ->
-                {true, #{file => File, line => binary_to_integer(LineNum)}};
+                try
+                    {true, #{file => File, line => binary_to_integer(LineNum)}}
+                catch
+                    error:badarg -> false
+                end;
             _ -> false
         end
     end, Lines).
@@ -342,16 +349,20 @@ parse_diagnostics(Output) ->
         %% Match rebar3 compile errors/warnings
         case re:run(Line, "src/([^:]+):(\\d+):(\\d+):\\s*(Warning|Error):\\s*(.+)", [{capture, [1, 2, 3, 4, 5], binary}]) of
             {match, [File, LineNum, Col, Severity, Message]} ->
-                {true, #{
-                    file => <<"src/", File/binary>>,
-                    line => binary_to_integer(LineNum),
-                    column => binary_to_integer(Col),
-                    severity => case Severity of
-                        <<"Warning">> -> warning;
-                        <<"Error">> -> error
-                    end,
-                    message => Message
-                }};
+                try
+                    {true, #{
+                        file => <<"src/", File/binary>>,
+                        line => binary_to_integer(LineNum),
+                        column => binary_to_integer(Col),
+                        severity => case Severity of
+                            <<"Warning">> -> warning;
+                            <<"Error">> -> error
+                        end,
+                        message => Message
+                    }}
+                catch
+                    error:badarg -> false
+                end;
             _ ->
                 %% Try alternate format: "Compiling src/X.erl failed"
                 case re:run(Line, "Compiling\\s+(src/[^\\s]+)\\s+failed", [{capture, [1], binary}]) of
